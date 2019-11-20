@@ -82,6 +82,14 @@ struct SplitArm {
     //BasicBlockId  source_block;
     ::std::map<unsigned int, VarState>  states;
     ::std::map<unsigned int, VarState>  arg_states;
+
+    SplitArm() = default;
+    SplitArm(SplitArm&& other) noexcept :
+        has_early_terminated { other.has_early_terminated },
+        always_early_terminated { other.always_early_terminated },
+        states { std::move(other.states) },
+        arg_states { std::move(other.arg_states) }
+    { }
 };
 struct SplitEnd {
     ::std::map<unsigned int, VarState>  states;
@@ -90,7 +98,7 @@ struct SplitEnd {
 
 TAGGED_UNION(ScopeType, Owning,
     (Owning, struct {
-        bool is_temporary;
+        bool is_temporary{};
         ::std::vector<unsigned int> slots;  // List of owned variables
         }),
     (Split, struct {
