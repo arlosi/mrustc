@@ -382,21 +382,81 @@ namespace {
                     << "static inline bool __builtin_mul_overflow_isize(intptr_t a, intptr_t b, intptr_t* out) {\n"
                     << "\treturn __builtin_mul_overflow_i" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
                     << "}\n"
-                    << "static inline _subcarry_u64(uint64_t a, uint64_t b, uint64_t* o) {\n"
+                    << "static inline bool __builtin_sub_overflow_u64(uint64_t a, uint64_t b, uint64_t* o) {\n"
                     << "\t""*o = a - b;\n"
-                    << "\t""return (a > b ? *o >= b : *o > a);\n"
+                    << "\t""return a < b;\n"
                     << "}\n"
-                    << "static inline _subcarry_u32(uint32_t a, uint32_t b, uint32_t* o) {\n"
+                    << "static inline bool __builtin_sub_overflow_u32(uint32_t a, uint32_t b, uint32_t* o) {\n"
                     << "\t""*o = a - b;\n"
-                    << "\t""return (a > b ? *o >= b : *o > a);\n"
+                    << "\t""return a < b;\n"
                     << "}\n"
-                    << "static inline _subcarry_u16(uint16_t a, uint16_t b, uint16_t* o) {\n"
+                    << "static inline bool __builtin_sub_overflow_u16(uint16_t a, uint16_t b, uint16_t* o) {\n"
                     << "\t""*o = a - b;\n"
-                    << "\t""return (a > b ? *o >= b : *o > a);\n"
+                    << "\t""return a < b;\n"
                     << "}\n"
-                    << "static inline _subcarry_u8(uint8_t a, uint8_t b, uint8_t* o) {\n"
+                    << "static inline bool __builtin_sub_overflow_u8(uint8_t a, uint8_t b, uint8_t* o) {\n"
                     << "\t""*o = a - b;\n"
-                    << "\t""return (a > b ? *o >= b : *o > a);\n"
+                    << "\t""return a < b;\n"
+                    << "}\n"
+                    << "static inline bool __builtin_sub_overflow_usize(uintptr_t a, uintptr_t b, uintptr_t* out) {\n"
+                    << "\treturn __builtin_sub_overflow_u" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_u64(uint64_t a, uint64_t b, uint64_t* o) {\n"
+                    << "\t""*o = a + b;\n"
+                    << "\t""return a > UINT64_MAX - b;\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_u32(uint32_t a, uint32_t b, uint32_t* o) {\n"
+                    << "\t""*o = a + b;\n"
+                    << "\t""return a > UINT32_MAX - b;\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_u16(uint16_t a, uint16_t b, uint16_t* o) {\n"
+                    << "\t""*o = a + b;\n"
+                    << "\t""return a > UINT16_MAX - b;\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_u8(uint8_t a, uint8_t b, uint8_t* o) {\n"
+                    << "\t""*o = a + b;\n"
+                    << "\t""return a > UINT8_MAX - b;\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_usize(uintptr_t a, uintptr_t b, uintptr_t* out) {\n"
+                    << "\treturn __builtin_add_overflow_u" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
+                    << "}\n"
+                    << "static inline bool __builtin_sub_overflow_i64(int64_t a, int64_t b, int64_t* o) {\n"
+                    << "\t""*o = a - b;\n"
+                    << "\t""return ((b < 0) && (a > INT64_MAX + b)) || ((b > 0) && (a < INT64_MIN + b));\n"
+                    << "}\n"
+                    << "static inline bool __builtin_sub_overflow_i32(int32_t a, int32_t b, int32_t* o) {\n"
+                    << "\t""*o = a - b;\n"
+                    << "\t""return ((b < 0) && (a > INT32_MAX + b)) || ((b > 0) && (a < INT32_MIN + b));\n"
+                    << "}\n"
+                    << "static inline bool __builtin_sub_overflow_i16(int16_t a, int16_t b, int16_t* o) {\n"
+                    << "\t""*o = a - b;\n"
+                    << "\t""return ((b < 0) && (a > INT16_MAX + b)) || ((b > 0) && (a < INT16_MIN + b));\n"
+                    << "}\n"
+                    << "static inline bool __builtin_sub_overflow_i8(int8_t a, int8_t b, int8_t* o) {\n"
+                    << "\t""*o = a - b;\n"
+                    << "\t""return ((b < 0) && (a > INT8_MAX + b)) || ((b > 0) && (a < INT8_MIN + b));\n"
+                    << "}\n"
+                    << "static inline bool __builtin_sub_overflow_isize(intptr_t a, intptr_t b, intptr_t* out) {\n"
+                    << "\treturn __builtin_sub_overflow_i" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_i64(int64_t a, int64_t b, int64_t* o) {\n"
+                    << "\t""*o = a + b;\n"
+                    << "\t""return ((b > 0) && (a > INT64_MAX - b)) || ((b < 0) && (a < INT64_MIN - b));\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_i32(int32_t a, int32_t b, int32_t* o) {\n"
+                    << "\t""*o = a + b;\n"
+                    << "\t""return ((b > 0) && (a > INT32_MAX - b)) || ((b < 0) && (a < INT32_MIN - b));\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_i16(int16_t a, int16_t b, int16_t* o) {\n"
+                    << "\t""*o = a + b;\n"
+                    << "\t""return ((b > 0) && (a > INT16_MAX - b)) || ((b < 0) && (a < INT16_MIN - b));\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_i8(int8_t a, int8_t b, int8_t* o) {\n"
+                    << "\t""*o = a + b;\n"
+                    << "\t""return ((b > 0) && (a > INT8_MAX - b)) || ((b < 0) && (a < INT8_MIN - b));\n"
+                    << "}\n"
+                    << "static inline bool __builtin_add_overflow_isize(intptr_t a, intptr_t b, intptr_t* out) {\n"
+                    << "\treturn __builtin_add_overflow_i" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
                     << "}\n"
                     << "static inline uint64_t __builtin_bswap64(uint64_t v) { return _byteswap_uint64(v); }\n"
                     << "static inline uint8_t InterlockedCompareExchange8(volatile uint8_t* v, uint8_t n, uint8_t e){ return _InterlockedCompareExchange8(v, n, e); }\n"
@@ -3619,7 +3679,7 @@ namespace {
                 {
                 case ::HIR::CoreType::U128:
                     if (ty == ::HIR::CoreType::I128) {
-                        // Cast from i128 to u128
+                        // Cast from u128 to i128
                         emit_lvalue(dst);
                         m_of << ".lo = ";
                         emit_lvalue(ve.val);
@@ -3636,12 +3696,14 @@ namespace {
                         emit_lvalue(ve.val);
                         m_of << "; ";
                         emit_lvalue(dst);
-                        m_of << ".hi = 0";
+                        m_of << ".hi = ";
+                        emit_lvalue(ve.val);
+                        m_of << " < 0 ? -1 : 0";
                     }
                     break;
                 case ::HIR::CoreType::I128:
                     if (ty == ::HIR::CoreType::U128) {
-                        // Cast from u128 to i128
+                        // Cast from i128 to u128
                         emit_lvalue(dst);
                         m_of << ".lo = ";
                         emit_lvalue(ve.val);
@@ -3658,7 +3720,9 @@ namespace {
                         emit_lvalue(ve.val);
                         m_of << "; ";
                         emit_lvalue(dst);
-                        m_of << ".hi = 0";  // TODO: Sign
+                        m_of << ".hi = ";
+                        emit_lvalue(ve.val);
+                        m_of << " < 0 ? -1 : 0";
                     }
                     break;
                 case ::HIR::CoreType::I8:
@@ -3671,11 +3735,7 @@ namespace {
                     switch (ty.m_data.as_Primitive())
                     {
                     case ::HIR::CoreType::U128:
-                        emit_lvalue(ve.val);
-                        m_of << ".lo";
-                        break;
                     case ::HIR::CoreType::I128:
-                        // TODO: Maintain sign
                         emit_lvalue(ve.val);
                         m_of << ".lo";
                         break;
@@ -3693,9 +3753,6 @@ namespace {
                     switch (ty.m_data.as_Primitive())
                     {
                     case ::HIR::CoreType::U128:
-                        emit_lvalue(ve.val);
-                        m_of << ".lo";
-                        break;
                     case ::HIR::CoreType::I128:
                         emit_lvalue(ve.val);
                         m_of << ".lo";
@@ -4960,8 +5017,8 @@ namespace {
                         m_of << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << "._0)";
                         break;
                     case Compiler::Msvc:
-                        emit_lvalue(e.ret_val); m_of << "._1 = _addcarry_u" << get_prim_size(params.m_types.at(0));
-                        m_of << "(0, "; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << "._0)";
+                        emit_lvalue(e.ret_val); m_of << "._1 = __builtin_add_overflow_" << params.m_types.at(0);
+                        m_of << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << "._0)";
                         break;
                     }
                 }
@@ -4986,7 +5043,7 @@ namespace {
                         m_of << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << "._0)";
                         break;
                     case Compiler::Msvc:
-                        emit_lvalue(e.ret_val); m_of << "._1 = _subcarry_u" << get_prim_size(params.m_types.at(0));
+                        emit_lvalue(e.ret_val); m_of << "._1 = __builtin_sub_overflow_" << params.m_types.at(0);
                         m_of << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << "._0)";
                         break;
                     }
@@ -5039,8 +5096,8 @@ namespace {
                         m_of << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << ")";
                         break;
                     case Compiler::Msvc:
-                        m_of << "_addcarry_u" << get_prim_size(params.m_types.at(0));
-                        m_of << "(0, "; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << ")";
+                        m_of << "__builtin_add_overflow_" << params.m_types.at(0);
+                        m_of << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << ")";
                         break;
                     }
                 }
@@ -5065,7 +5122,7 @@ namespace {
                         m_of << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << ")";
                         break;
                     case Compiler::Msvc:
-                        m_of << "_subcarry_u" << get_prim_size(params.m_types.at(0));
+                        m_of << "__builtin_sub_overflow_" << params.m_types.at(0);
                         m_of << "("; emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", &"; emit_lvalue(e.ret_val); m_of << ")";
                         break;
                     }
