@@ -306,16 +306,12 @@ namespace {
             case Compiler::Msvc:
                 m_of
                     << "static inline uint64_t __builtin_popcount(uint64_t v) {\n"
-                    << "\treturn (v >> 32 != 0 ? __popcnt64(v>>32) : 32 + __popcnt64(v));\n"
+                    << "\treturn __popcnt64(v);\n"
                     << "}\n"
-                    << "static inline int __builtin_ctz(uint32_t v) { int rv; _BitScanForward(&rv, v); return rv; }\n"
-                    << "static inline int __builtin_clz(uint32_t v) { int rv; _BitScanReverse(&rv, v); return 31 - rv; }\n"
-                    << "static inline uint64_t __builtin_clz64(uint64_t v) {\n"
-                    << "\treturn ( (v >> 32) != 0 ? __builtin_clz(v>>32) : 32 + __builtin_clz(v) );\n"
-                    << "}\n"
-                    << "static inline uint64_t __builtin_ctz64(uint64_t v) {\n"
-                    << "\treturn ((v&0xFFFFFFFF) == 0 ? __builtin_ctz(v>>32) + 32 : __builtin_ctz(v));\n"
-                    << "}\n"
+                    << "static inline int32_t __builtin_ctz(uint32_t v) { int rv; _BitScanForward(&rv, v); return rv; }\n"
+                    << "static inline int32_t __builtin_clz(uint32_t v) { int rv; _BitScanReverse(&rv, v); return 31 - rv; }\n"
+                    << "static inline int32_t __builtin_ctz64(uint64_t v) { int rv; _BitScanForward64(&rv, v); return rv; }\n"
+                    << "static inline int32_t __builtin_clz64(uint64_t v) { int rv; _BitScanReverse64(&rv, v); return 63 - rv; }\n"
                     << "static inline bool __builtin_mul_overflow_u8(uint8_t a, uint8_t b, uint8_t* out) {\n"
                     << "\t*out = a*b;\n"
                     << "\tif(b == 0) return false;\n"
@@ -491,7 +487,7 @@ namespace {
             {
                 m_of
                     << "typedef struct { uint64_t lo, hi; } uint128_t;\n"
-                    << "typedef struct { uint64_t lo, hi; } int128_t;\n"
+                    << "typedef struct { int64_t lo, hi; } int128_t;\n"
                     << "static inline float make_float(int is_neg, int exp, uint32_t mantissa_bits) { float rv; uint32_t vi=(mantissa_bits&((1<<23)-1))|((exp+127)<<23);if(is_neg)vi|=1<<31; memcpy(&rv, &vi, 4); return rv; }\n"
                     << "static inline double make_double(int is_neg, int exp, uint32_t mantissa_bits) { double rv; uint64_t vi=(mantissa_bits&((1ull<<52)-1))|((uint64_t)(exp+1023)<<52);if(is_neg)vi|=1ull<<63; memcpy(&rv, &vi, 4); return rv; }\n"
                     << "static inline uint128_t make128(uint64_t v) { uint128_t rv = { v, 0 }; return rv; }\n"
@@ -594,7 +590,7 @@ namespace {
                     << "static inline int128_t or128s (int128_t a, int128_t b) { int128_t v = { a.lo | b.lo, a.hi | b.hi }; return v; }\n"
                     << "static inline int128_t xor128s(int128_t a, int128_t b) { int128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }\n"
                     << "static inline int128_t shl128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }\n"
-                    << "static inline int128_t shr128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = a.hi >> b; } else { v.lo = a.hi >> (b - 64); v.hi = 0; } return v; }\n"
+                    << "static inline int128_t shr128s(int128_t a, uint32_t b) { int128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = a.hi >> b; } else { v.lo = a.hi >> (b - 64); v.hi = a.hi < 0 ? -1 : 0; } return v; }\n"
                     ;
             }
             else
@@ -5273,27 +5269,10 @@ namespace {
                 if( type_is_emulated_i128(params.m_types.at(0)) )
                 {
                     m_of << "popcount128";
-                    if(params.m_types.at(0) == ::HIR::CoreType::I128)
-                        m_of << "s";
                 }
                 else
                 {
-                    switch(m_compiler)
-                    {
-                    case Compiler::Gcc:
-                        m_of << "__builtin_popcount";
-                        break;
-                    case Compiler::Msvc:
-                        if( params.m_types.at(0) == ::HIR::CoreType::U64 || params.m_types.at(0) == ::HIR::CoreType::I64 )
-                        {
-                            m_of << "__popcnt64";
-                        }
-                        else
-                        {
-                            m_of << "__popcnt";
-                        }
-                        break;
-                    }
+                    m_of << "__builtin_popcount";
                 }
                 m_of << "("; emit_param(e.args.at(0)); m_of << ")";
             }
