@@ -442,7 +442,7 @@ Token Lexer::getTokenInt()
                         }
                     }
                     if( num_mode != DEC )
-                        TODO(this->getPosition(), "Non-decimal floats");
+                        TODO(this->point_span(), "Non-decimal floats");
 
 
                     this->ungetc();
@@ -946,6 +946,17 @@ char Lexer::getc_byte()
     if( rv == EOF || m_istream.eof() )
         throw Lexer::EndOfFile();
 
+    if( rv == '\r' )
+    {
+        if( m_istream.get() != '\n' )
+        {
+            m_istream.unget();
+        }
+        else
+        {
+            rv = '\n';
+        }
+    }
     if( rv == '\n' )
     {
         m_line ++;

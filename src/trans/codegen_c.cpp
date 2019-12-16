@@ -270,7 +270,7 @@ namespace {
                     << "#define ALIGNOF(t) __alignof(t)\n"
                     ;
                 break;
-            //case Compilter::Std11:
+            //case Compiler::Std11:
             //    break;
             }
             switch (m_compiler)
@@ -1066,7 +1066,7 @@ namespace {
                 }
             }
             //DEBUG("- " << cmd_ss.str());
-            ::std::cout << "Running comamnd - " << cmd_ss.str() << ::std::endl;
+            ::std::cout << "Running command - " << cmd_ss.str() << ::std::endl;
             if( opt.build_command_file != "" )
             {
                 ::std::cerr << "INVOKE CC: " << cmd_ss.str() << ::std::endl;
@@ -2302,7 +2302,7 @@ namespace {
                         }
                         break;
                     default:
-                        MIR_TODO(*m_mir_res, "Handle intger literal of type " << ty);
+                        MIR_TODO(*m_mir_res, "Handle integer literal of type " << ty);
                     }
                 }
                 else if( ty.m_data.is_Pointer() )
@@ -2709,8 +2709,8 @@ namespace {
                 )
             }
 
-            const bool EMIT_STRUCTURED = false; // Saves time.
-            const bool USE_STRUCTURED = true;  // Still not correct.
+            const bool EMIT_STRUCTURED = (nullptr != getenv("MRUSTC_STRUCTURED_C")); // Saves time.
+            const bool USE_STRUCTURED = EMIT_STRUCTURED && (0 == strcmp("1", getenv("MRUSTC_STRUCTURED_C")));  // Still not correct.
             if( EMIT_STRUCTURED )
             {
                 m_of << "#if " << USE_STRUCTURED << "\n";
@@ -3642,7 +3642,7 @@ namespace {
         void emit_rvalue_cast(const ::MIR::TypeResolve& mir_res, const ::MIR::LValue& dst, const ::MIR::RValue::Data_Cast& ve)
         {
             if (m_resolve.is_type_phantom_data(ve.type)) {
-                m_of << "/* PhandomData cast */\n";
+                m_of << "/* PhantomData cast */\n";
                 return;
             }
 
@@ -4990,7 +4990,7 @@ namespace {
             }
             else if( name == "unlikely" ) {
             }
-            // Overflowing Arithmatic
+            // Overflowing Arithmetic
             // HACK: Uses GCC intrinsics
             else if( name == "add_with_overflow" ) {
                 if(m_options.emulated_i128 && params.m_types.at(0) == ::HIR::CoreType::U128)
@@ -5150,7 +5150,7 @@ namespace {
                     }
                 }
             }
-            // Unchecked Arithmatic
+            // Unchecked Arithmetic
             // - exact_div is UB to call on a non-multiple
             else if( name == "unchecked_div" || name == "exact_div") {
                 emit_lvalue(e.ret_val); m_of << " = ";
