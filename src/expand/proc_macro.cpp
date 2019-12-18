@@ -832,7 +832,7 @@ ProcMacroInv::ProcMacroInv(const Span& sp, const char* executable, const ::HIR::
     saAttr.bInheritHandle = true;
     saAttr.lpSecurityDescriptor = nullptr;
 
-    // Create a pipe for the child process's STDOUT. 
+    // Create a pipe for the child process's STDOUT.
     if (!CreatePipe(&stdout_read, &stdout_write, &saAttr, 0)) {
         BUG(sp, "stdout CreatePipe failed: " << GetLastError());
     }
@@ -855,7 +855,7 @@ ProcMacroInv::ProcMacroInv(const Span& sp, const char* executable, const ::HIR::
     this->child_stdin = stdin_write;
     this->child_stdout = stdout_read;
 
-    // Create the child process. 
+    // Create the child process.
     PROCESS_INFORMATION piProcInfo{};
     STARTUPINFO siStartInfo{};
     siStartInfo.cb = sizeof(STARTUPINFO);

@@ -305,7 +305,7 @@ namespace {
                 break;
             case Compiler::Msvc:
                 m_of
-                    << "static inline uint64_t __builtin_popcount(uint64_t v) {\n"
+                    << "static inline int32_t __builtin_popcount(uint64_t v) {\n"
                     << "\treturn __popcnt64(v);\n"
                     << "}\n"
                     << "static inline int32_t __builtin_ctz(uint32_t v) { int rv; _BitScanForward(&rv, v); return rv; }\n"
@@ -456,16 +456,7 @@ namespace {
                     << "}\n"
                     << "static inline uint64_t __builtin_bswap64(uint64_t v) { return _byteswap_uint64(v); }\n"
                     << "static inline uint8_t InterlockedCompareExchange8(volatile uint8_t* v, uint8_t n, uint8_t e){ return _InterlockedCompareExchange8(v, n, e); }\n"
-                    << "static inline uint8_t InterlockedCompareExchangeNoFence8(volatile uint8_t* v, uint8_t n, uint8_t e){ return InterlockedCompareExchange8(v, n, e); }\n"
-                    << "static inline uint8_t InterlockedCompareExchangeAcquire8(volatile uint8_t* v, uint8_t n, uint8_t e){ return InterlockedCompareExchange8(v, n, e); }\n"
-                    << "static inline uint8_t InterlockedCompareExchangeRelease8(volatile uint8_t* v, uint8_t n, uint8_t e){ return InterlockedCompareExchange8(v, n, e); }\n"
-                    //<< "static inline uint8_t InterlockedExchange8(volatile uint8_t* v, uint8_t n){ return _InterlockedExchange8((volatile char*)v, (char)n); }\n"
-                    << "static inline uint8_t InterlockedExchangeNoFence8(volatile uint8_t* v, uint8_t n){ return InterlockedExchange8(v, n); }\n"
-                    << "static inline uint8_t InterlockedExchangeAcquire8(volatile uint8_t* v, uint8_t n){ return InterlockedExchange8(v, n); }\n"
-                    << "static inline uint8_t InterlockedExchangeRelease8(volatile uint8_t* v, uint8_t n){ return InterlockedExchange8(v, n); }\n"
                     << "static inline uint32_t InterlockedCompareExchange32(volatile uint32_t* v, uint32_t n, uint32_t e){ return InterlockedCompareExchange(v, n, e); }\n"
-                    << "static inline uint64_t InterlockedCompareExchange64Acquire(volatile uint64_t* v, uint64_t n, uint64_t e){ return InterlockedCompareExchange64(v, n, e); }\n"
-                    << "static inline uint64_t InterlockedCompareExchange64Release(volatile uint64_t* v, uint64_t n, uint64_t e){ return InterlockedCompareExchange64(v, n, e); }\n"
                     << "#pragma comment(linker, \"/alternatename:TYPE_INFO_VTABLE=??_7type_info@@6B@\")\n";
                     ;
                 // Atomic hackery
@@ -1009,7 +1000,9 @@ namespace {
 
                     for( const auto& crate : m_crate.m_ext_crates )
                     {
-                        args.push_back(crate.second.m_path + ".obj");
+                        if (crate.second.m_path.compare(crate.second.m_path.size() - 5, 5, ".rlib") == 0) {
+                            args.push_back(crate.second.m_path + ".obj");
+                        }
                     }
                     // Crate-specified libraries
                     for(const auto& lib : m_crate.m_ext_libs) {
@@ -1977,15 +1970,14 @@ namespace {
             TRACE_FUNCTION_F(p);
 
             auto type = params.monomorph(m_resolve, item.m_type);
-            if (is_zero_literal(type, item.m_value_res, params)) {
-                return; // c statics are default initialized to zeroed memory.
+            if (!is_zero_literal(type, item.m_value_res, params)) {
+                emit_ctype(type, FMT_CB(ss, ss << Trans_Mangle(p);));
+                m_of << " = ";
+                emit_literal(type, item.m_value_res, params);
+                m_of << ";";
+                m_of << "\t// static " << p << " : " << type;
+                m_of << "\n";
             }
-            emit_ctype( type, FMT_CB(ss, ss << Trans_Mangle(p);) );
-            m_of << " = ";
-            emit_literal(type, item.m_value_res, params);
-            m_of << ";";
-            m_of << "\t// static " << p << " : " << type;
-            m_of << "\n";
 
             m_mir_res = nullptr;
         }
@@ -4312,7 +4304,7 @@ namespace {
             }
             else if( matches_template("xacquire; lock; cmpxchgq $2, $1", /*input=*/{"r", "{rax}"}, /*output=*/{"={rax}", "+*m"}) )
             {
-                m_of << indent << "InterlockedCompareExchange64Acquire(";
+                m_of << indent << "InterlockedCompareExchangeAcquire64(";
                 emit_lvalue(e.outputs[1].second); m_of << ",";
                 emit_lvalue(e.inputs[0].second); m_of << ",";
                 emit_lvalue(e.inputs[1].second);
@@ -4321,7 +4313,7 @@ namespace {
             }
             else if( matches_template("xrelease; lock; cmpxchgq $2, $1", /*input=*/{"r", "{rax}"}, /*output=*/{"={rax}", "+*m"}) )
             {
-                m_of << indent << "InterlockedCompareExchange64Release(";
+                m_of << indent << "InterlockedCompareExchangeRelease64(";
                 emit_lvalue(e.outputs[1].second); m_of << ",";
                 emit_lvalue(e.inputs[0].second); m_of << ",";
                 emit_lvalue(e.inputs[1].second);
@@ -4459,17 +4451,6 @@ namespace {
                 }
                 throw "";
                 };
-            auto get_atomic_suffix_msvc = [&](Ordering o)->const char* {
-                switch(o)
-                {
-                case Ordering::SeqCst:  return "";
-                case Ordering::Acquire: return "";
-                case Ordering::Release: return "";
-                case Ordering::Relaxed: return "";
-                case Ordering::AcqRel:  return "";  // this is either Acquire or Release
-                }
-                throw "";
-            };
             auto get_atomic_ordering = [&](const RcString& name, size_t prefix_len)->Ordering {
                     if( name.size() < prefix_len )
                     {
@@ -4522,40 +4503,37 @@ namespace {
                     }
                 };
             auto emit_msvc_atomic_op = [&](const char* name, Ordering ordering, bool is_before_size=false) {
-                const char* o_before = is_before_size ? get_atomic_suffix_msvc(ordering) : "";
-                const char* o_after  = is_before_size ? "" : get_atomic_suffix_msvc(ordering);
+                m_of << name;
                 switch (params.m_types.at(0).m_data.as_Primitive())
                 {
                 case ::HIR::CoreType::U8:
                 case ::HIR::CoreType::I8:
-                    m_of << name << o_before << "8" << o_after << "(";
+                    m_of << "8";
                     break;
                 case ::HIR::CoreType::U16:
                 case ::HIR::CoreType::I16:
-                    m_of << name << o_before << "16" << o_after << "(";
+                    m_of << "16";
                     break;
                 case ::HIR::CoreType::U32:
                 case ::HIR::CoreType::I32:
-                    m_of << name << o_before << o_after << "(";
                     break;
                 case ::HIR::CoreType::U64:
                 case ::HIR::CoreType::I64:
-                    m_of << name << o_before << "64" << o_after << "(";
+                    m_of << "64";
                     break;
                 case ::HIR::CoreType::Usize:
                 case ::HIR::CoreType::Isize:
-                    m_of << name << o_before;
                     if( Target_GetCurSpec().m_arch.m_pointer_bits == 64 )
                         m_of << "64";
                     else if( Target_GetCurSpec().m_arch.m_pointer_bits == 32 )
                         m_of << "";
                     else
                         MIR_TODO(mir_res, "Handle non 32/64 bit pointer types");
-                    m_of << o_after << "(";
                     break;
                 default:
                     MIR_BUG(mir_res, "Unsupported atomic type - " << params.m_types.at(0));
                 }
+                m_of << "(";
                 };
             auto emit_atomic_cast = [&]() {
                 m_of << "(_Atomic "; emit_ctype(params.m_types.at(0)); m_of << "*)";
