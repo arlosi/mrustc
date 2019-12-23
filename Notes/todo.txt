@@ -43,16 +43,25 @@ TODO:
     - Lots of code touched
     - Extra complexity in typecheck and MIR lowering?
     - Need to check/assume that the lists are the same length
+  - Alternative: Create a custom type instead of std::pair
+    - Reduces typing
+    - No memory gains though.
 
 ## Optimisations
 - Argument propagation: replace assignments from `Argument(_)` if target is only
   written once
-- Dead assignment removal (Delete `<val> = Use(<val>)`
-- Tuple destructure removal
- - Spot `#1 = (...,)`, `#2 = (#1).n` where #1 is Write-once, borrow-none
 - Remove useless borrows (remove write-once &T lvalues if they're never used by
   value - only used via deref)
+- Remove useless re-borrows (borrow used once, source only ever dropped)
+  - Find `foo = &mut *bar;` where `bar` is only borrowed once (here) and dropped once
+  - Replace the borrow with a move, delete the drop
+  - Need to avoid loops
+- Targeted transformations
+  - Detect slice metadata accesses (union between `(usize,usize)` and `*const [T]`) and replace with `DSTMETA` op
+  - Will avoid the need for patching libcore's slice len method
 
+
+- Fix/remove the optimisation that replaces `foo` with `bar` if `foo = bar;` is seen (it's blocking better optimisations that would eliminate `bar`)
 
 <!-- vim: ft=markdown
 -->

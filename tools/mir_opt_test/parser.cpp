@@ -13,6 +13,7 @@ namespace {
     HIR::Function parse_function(TokenStream& lex, RcString& out_name);
     HIR::PathParams parse_params(TokenStream& lex);
     HIR::Path parse_path(TokenStream& lex);
+    HIR::TypeRef get_core_type(const RcString& s);
     HIR::TypeRef parse_type(TokenStream& lex);
     MIR::LValue parse_lvalue(TokenStream& lex, const ::std::map<RcString, MIR::LValue::Storage>& name_map);
     MIR::LValue parse_param(TokenStream& lex, const ::std::map<RcString, MIR::LValue::Storage>& name_map);
@@ -80,7 +81,7 @@ MirOptTestFile  MirOptTestFile::load_from_file(const helpers::path& p)
                 }
                 else
                 {
-                    // Ignore?
+                    // Ignore? Support other forms of tests?
                 }
             }
         }
@@ -97,6 +98,31 @@ MirOptTestFile  MirOptTestFile::load_from_file(const helpers::path& p)
     return rv;
 }
 namespace {
+    const HIR::GenericParams* g_item_params;
+
+    HIR::GenericParams parse_genericdef(TokenStream& lex)
+    {
+        Token   tok;
+        HIR::GenericParams  rv;
+        if(consume_if(lex, TOK_LT) )
+        {
+            while( lex.lookahead(0) != TOK_GT )
+            {
+                GET_CHECK_TOK(tok, lex, TOK_IDENT);
+                auto name = tok.istr();
+
+                rv.m_types.push_back(HIR::TypeParamDef());
+                rv.m_types.back().m_name = name;
+
+                if( consume_if(lex, TOK_COLON) )
+                {
+                    TODO(lex.point_span(), "parse_genericdef - bounds");
+                }
+            }
+            GET_CHECK_TOK(tok, lex, TOK_GT);
+        }
+        return rv;
+    }
     HIR::Function parse_function(TokenStream& lex, RcString& out_name)
     {
         Token   tok;
@@ -116,10 +142,8 @@ namespace {
         auto fcn_name = tok.istr();
         DEBUG("fn " << fcn_name);
 
-        if(consume_if(lex, TOK_LT) )
-        {
-            TODO(lex.point_span(), "Generic functions");
-        }
+        fcn_decl.m_params = parse_genericdef(lex);
+        g_item_params = &fcn_decl.m_params;
 
         // Arguments
         auto& args = fcn_decl.m_args;
@@ -229,20 +253,67 @@ namespace {
                     case TOK_DASH: {
                         bool is_neg = (tok.type() == TOK_DASH);
                         GET_TOK(tok, lex);
+                        Token   ty_tok;
+                        GET_CHECK_TOK(ty_tok, lex, TOK_IDENT);
+                        auto t = get_core_type(ty_tok.istr());
+                        if(t == HIR::TypeRef())
+                            throw ParseError::Unexpected(lex, ty_tok);
+                        auto ct = t.m_data.as_Primitive();
                         switch(tok.type())
                         {
-                        case TOK_INTEGER:
-                            TODO(lex.point_span(), "MIR assign - " << (is_neg ? "-" : "+") << tok.intval());
-                            //src = MIR::Constant::make_Int({ tok.intval(), ct });
-                        case TOK_FLOAT:
-                            TODO(lex.point_span(), "MIR assign - " << (is_neg ? "-" : "+") << tok.floatval());
-                            //src = MIR::Constant::make_Float({ tok.floatval(), ct });
+                        case TOK_INTEGER: {
+                            auto v = tok.intval();
+                            switch(ct)
+                            {
+                            case HIR::CoreType::I8:
+                            case HIR::CoreType::I16:
+                            case HIR::CoreType::I32:
+                            case HIR::CoreType::I64:
+                            case HIR::CoreType::I128:
+                            case HIR::CoreType::Isize:
+                                break;
+                            default:
+                                throw ParseError::Unexpected(lex, ty_tok);
+                            }
+                            src = MIR::Constant::make_Int({ is_neg ? -static_cast<int64_t>(v) : static_cast<int64_t>(v), ct });
+                            } break;
+                        case TOK_FLOAT: {
+                            auto v = tok.floatval();
+                            switch(ct)
+                            {
+                            case HIR::CoreType::F32:
+                            case HIR::CoreType::F64:
+                                break;
+                            default:
+                                throw ParseError::Unexpected(lex, ty_tok);
+                            }
+                            src = MIR::Constant::make_Float({ (is_neg ? -1 : 1) * v, ct });
+                            } break;
                         default:
                             throw ParseError::Unexpected(lex, tok, { TOK_INTEGER, TOK_FLOAT });
                         }
                         } break;
-                    case TOK_INTEGER:
-                        TODO(lex.point_span(), "MIR assign - " << tok.intval());
+                    case TOK_INTEGER: {
+                        auto v = tok.intval();
+                        GET_CHECK_TOK(tok, lex, TOK_IDENT);
+                        auto t = get_core_type(tok.istr());
+                        if(t == HIR::TypeRef())
+                            throw ParseError::Unexpected(lex, tok);
+                        auto ct = t.m_data.as_Primitive();
+                        switch(ct)
+                        {
+                        case HIR::CoreType::U8:
+                        case HIR::CoreType::U16:
+                        case HIR::CoreType::U32:
+                        case HIR::CoreType::U64:
+                        case HIR::CoreType::U128:
+                        case HIR::CoreType::Usize:
+                            break;
+                        default:
+                            throw ParseError::Unexpected(lex, tok);
+                        }
+                        src = MIR::Constant::make_Uint({ v, ct });
+                        } break;
 
                     case TOK_AMP:
                         if( consume_if(lex, TOK_RWORD_MOVE) )
@@ -255,7 +326,14 @@ namespace {
 
                     // Operator (e.g. `ADD(...)`) or an lvalue
                     case TOK_IDENT:
-                        if( consume_if(lex, TOK_PAREN_OPEN) )
+                        if( tok.istr() == "CAST" )
+                        {
+                            auto v = parse_lvalue(lex, val_name_map);
+                            GET_CHECK_TOK(tok, lex, TOK_RWORD_AS);
+                            auto ty = parse_type(lex);
+                            src = MIR::RValue::make_Cast({ mv$(v), mv$(ty) });
+                        }
+                        else if( consume_if(lex, TOK_PAREN_OPEN) )
                         {
                             auto parse_binop = [&](TokenStream& lex, MIR::eBinOp op) {
                                 Token   tok;
@@ -268,6 +346,16 @@ namespace {
                                 src = parse_binop(lex, MIR::eBinOp::ADD);
                             else if(tok.istr() == "SUB")
                                 src = parse_binop(lex, MIR::eBinOp::SUB);
+                            else if(tok.istr() == "BIT_SHL")
+                                src = parse_binop(lex, MIR::eBinOp::BIT_SHL);
+                            else if(tok.istr() == "BIT_SHR")
+                                src = parse_binop(lex, MIR::eBinOp::BIT_SHR);
+                            else if(tok.istr() == "BIT_AND")
+                                src = parse_binop(lex, MIR::eBinOp::BIT_AND);
+                            else if(tok.istr() == "BIT_OR")
+                                src = parse_binop(lex, MIR::eBinOp::BIT_OR);
+                            else if(tok.istr() == "BIT_XOR")
+                                src = parse_binop(lex, MIR::eBinOp::BIT_XOR);
                             else
                             {
                                 TODO(lex.point_span(), "MIR assign operator - " << tok.istr());
@@ -448,6 +536,14 @@ namespace {
         // 3. Convert BB indexes into correct numbering
         for(auto& blk : mir_fcn.blocks)
         {
+            auto bb_idx = &blk - mir_fcn.blocks.data();
+            auto translate_bb = [&](unsigned e)->unsigned {
+                const auto& name = lookup_bb_names[e];
+                auto it = real_bb_name_map.find(name);
+                if(it == real_bb_name_map.end())
+                    throw std::runtime_error(FMT(lex.point_span() << ": BB" << bb_idx << "/TERM Unable to find basic block name `" << name << "`")); 
+                return it->second;
+                };
             TU_MATCH_HDRA( (blk.terminator), {)
             TU_ARMA(Diverge, e) {
                 }
@@ -456,32 +552,33 @@ namespace {
             TU_ARMA(Incomplete, e) {
                 }
             TU_ARMA(Goto, e) {
-                e = real_bb_name_map.at( lookup_bb_names[e] );
+                e = translate_bb(e);
                 }
             TU_ARMA(Panic, e) {
-                e.dst = real_bb_name_map.at( lookup_bb_names[e.dst] );
+                e.dst = translate_bb(e.dst);
                 }
             TU_ARMA(Call, e) {
-                e.ret_block = real_bb_name_map.at( lookup_bb_names[e.ret_block] );
-                e.panic_block = real_bb_name_map.at( lookup_bb_names[e.panic_block] );
+                e.ret_block = translate_bb(e.ret_block);
+                e.panic_block = translate_bb(e.panic_block);
                 }
             TU_ARMA(If, e) {
-                e.bb0 = real_bb_name_map.at( lookup_bb_names[e.bb0] );
-                e.bb1 = real_bb_name_map.at( lookup_bb_names[e.bb1] );
+                e.bb0 = translate_bb(e.bb0);
+                e.bb1 = translate_bb(e.bb1);
                 }
             TU_ARMA(Switch, e) {
                 for(auto& tgt : e.targets)
-                    tgt = real_bb_name_map.at( lookup_bb_names[tgt] );
+                    tgt = translate_bb(tgt);
                 }
             TU_ARMA(SwitchValue, e) {
                 for(auto& tgt : e.targets)
-                    tgt = real_bb_name_map.at( lookup_bb_names[tgt] );
+                    tgt = translate_bb(tgt); 
                 }
             }
         }
 
         DEBUG(fcn_decl.m_args << " -> " << fcn_decl.m_return);
         out_name = mv$(fcn_name);
+        g_item_params = nullptr;
         return fcn_decl;
     }
     HIR::PathParams parse_params(TokenStream& lex)
@@ -489,7 +586,31 @@ namespace {
         HIR::PathParams rv;
         if( lex.lookahead(0) == TOK_LT || lex.lookahead(0) == TOK_DOUBLE_LT )
         {
-            TODO(lex.point_span(), "parse_params");
+            if( !consume_if(lex, TOK_LT) ) {
+                lex.getToken();
+                lex.putback(TOK_LT);
+            }
+
+            while( !(lex.lookahead(0) == TOK_GT || lex.lookahead(0) == TOK_DOUBLE_GT) )
+            {
+                // TODO: Lifetimes?
+                rv.m_types.push_back( parse_type(lex) );
+                if( !consume_if(lex, TOK_COMMA) )
+                    break;
+            }
+
+            if( consume_if(lex, TOK_GT) )
+            {
+            }
+            else if( consume_if(lex, TOK_DOUBLE_GT) )
+            {
+                lex.putback(TOK_GT);
+            }
+            else
+            {
+                auto tok = lex.getToken();
+                throw ParseError::Unexpected(lex, tok, { TOK_GT, TOK_DOUBLE_GT });
+            }
         }
         return rv;
     }
@@ -527,6 +648,25 @@ namespace {
             return parse_genericpath(lex);
         }
     }
+    HIR::TypeRef get_core_type(const RcString& s)
+    {
+             if( s == "bool"  ) return HIR::TypeRef(HIR::CoreType::Bool);
+        else if( s == "str"   ) return HIR::TypeRef(HIR::CoreType::Str );
+        else if( s == "u8"    ) return HIR::TypeRef(HIR::CoreType::U8);
+        else if( s == "i8"    ) return HIR::TypeRef(HIR::CoreType::I8);
+        else if( s == "u16"   ) return HIR::TypeRef(HIR::CoreType::U16);
+        else if( s == "i16"   ) return HIR::TypeRef(HIR::CoreType::I16);
+        else if( s == "u32"   ) return HIR::TypeRef(HIR::CoreType::U32);
+        else if( s == "i32"   ) return HIR::TypeRef(HIR::CoreType::I32);
+        else if( s == "u64"   ) return HIR::TypeRef(HIR::CoreType::U64);
+        else if( s == "i64"   ) return HIR::TypeRef(HIR::CoreType::I64);
+        else if( s == "u128"  ) return HIR::TypeRef(HIR::CoreType::U128);
+        else if( s == "i128"  ) return HIR::TypeRef(HIR::CoreType::I128);
+        else if( s == "usize" ) return HIR::TypeRef(HIR::CoreType::Usize);
+        else if( s == "isize" ) return HIR::TypeRef(HIR::CoreType::Isize);
+        else
+            return HIR::TypeRef();
+    }
     HIR::TypeRef parse_type(TokenStream& lex)
     {
         Token   tok;
@@ -544,27 +684,47 @@ namespace {
             GET_CHECK_TOK(tok, lex, TOK_PAREN_CLOSE);
             return HIR::TypeRef(mv$(tys));
             } break;
+        case TOK_SQUARE_OPEN: {
+            auto ity = parse_type(lex);
+            GET_TOK(tok, lex);
+            if( tok == TOK_SEMICOLON )
+            {
+                GET_CHECK_TOK(tok, lex, TOK_INTEGER);
+                auto size = tok.intval();
+                ASSERT_BUG(lex.point_span(), size < UINT_MAX, "");
+                return HIR::TypeRef::new_array(mv$(ity), static_cast<unsigned>(size));
+            }
+            else if( tok == TOK_SQUARE_CLOSE )
+            {
+                return HIR::TypeRef::new_slice(mv$(ity));
+            }
+            else
+            {
+                throw ParseError::Unexpected(lex, tok, {TOK_SEMICOLON, TOK_SQUARE_CLOSE});
+            }
+            } break;
         case TOK_IDENT:
             if( tok.istr() == "dyn" )
             {
                 TODO(lex.point_span(), tok);
             }
-            else if( tok.istr() == "bool" ) return HIR::TypeRef(HIR::CoreType::Bool);
-            else if( tok.istr() == "str" )  return HIR::TypeRef(HIR::CoreType::Str );
-            else if( tok.istr() == "u8" ) return HIR::TypeRef(HIR::CoreType::U8);
-            else if( tok.istr() == "i8" ) return HIR::TypeRef(HIR::CoreType::I8);
-            else if( tok.istr() == "u16" ) return HIR::TypeRef(HIR::CoreType::U16);
-            else if( tok.istr() == "i16" ) return HIR::TypeRef(HIR::CoreType::I16);
-            else if( tok.istr() == "u32" ) return HIR::TypeRef(HIR::CoreType::U32);
-            else if( tok.istr() == "i32" ) return HIR::TypeRef(HIR::CoreType::I32);
-            else if( tok.istr() == "u64" ) return HIR::TypeRef(HIR::CoreType::U64);
-            else if( tok.istr() == "i64" ) return HIR::TypeRef(HIR::CoreType::I64);
-            else if( tok.istr() == "u128" ) return HIR::TypeRef(HIR::CoreType::U128);
-            else if( tok.istr() == "i128" ) return HIR::TypeRef(HIR::CoreType::I128);
-            else if( tok.istr() == "usize" ) return HIR::TypeRef(HIR::CoreType::Usize);
-            else if( tok.istr() == "isize" ) return HIR::TypeRef(HIR::CoreType::Isize);
             else
             {
+                auto t = get_core_type(tok.istr());
+                if( t != HIR::TypeRef() )
+                {
+                    return t;
+                }
+                if( g_item_params )
+                {
+                    for(size_t i = 0; i < g_item_params->m_types.size(); i ++)
+                    {
+                        if( g_item_params->m_types[i].m_name == tok.istr() )
+                        {
+                            return HIR::TypeRef(tok.istr(), 256 + static_cast<unsigned>(i));
+                        }
+                    }
+                }
                 TODO(lex.point_span(), tok);
             }
             break;
@@ -577,6 +737,15 @@ namespace {
                 return HIR::TypeRef::new_borrow(HIR::BorrowType::Unique, parse_type(lex));
             else
                 return HIR::TypeRef::new_borrow(HIR::BorrowType::Shared, parse_type(lex));
+        case TOK_STAR:
+            if( consume_if(lex, TOK_RWORD_MOVE) )
+                return HIR::TypeRef::new_pointer(HIR::BorrowType::Owned, parse_type(lex));
+            else if( consume_if(lex, TOK_RWORD_MUT) )
+                return HIR::TypeRef::new_pointer(HIR::BorrowType::Unique, parse_type(lex));
+            else if( consume_if(lex, TOK_RWORD_CONST) )
+                return HIR::TypeRef::new_pointer(HIR::BorrowType::Shared, parse_type(lex));
+            else
+                throw ParseError::Unexpected(lex, lex.getToken(), { TOK_RWORD_MOVE, TOK_RWORD_MUT, TOK_RWORD_CONST });
         default:
             TODO(lex.point_span(), tok);
         }
@@ -593,7 +762,10 @@ namespace {
             Token   tok;
             GET_TOK(tok, lex);
             CHECK_TOK(tok, TOK_IDENT);
-            return name_map.at(tok.istr()).clone();
+            auto it = name_map.find(tok.istr());
+            if( it == name_map.end() )
+                ERROR(lex.point_span(), E0000, "Unable to find value " << tok.istr());
+            return it->second.clone();
         }
     }
     MIR::LValue parse_lvalue(TokenStream& lex, const ::std::map<RcString, MIR::LValue::Storage>& name_map)
