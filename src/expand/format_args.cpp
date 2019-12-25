@@ -200,7 +200,9 @@ namespace {
         ::std::string   cur_literal;
 
         const char* s = format_string.c_str();
-        for( ; *s; s ++)
+        const char* s_end = s + format_string.length();
+
+        for( ; s != s_end; s ++)
         {
             if( *s != '{' )
             {
