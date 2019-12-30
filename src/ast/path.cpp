@@ -116,10 +116,15 @@ PathBinding_Macro PathBinding_Macro::clone() const
         needs_comma = true;
         os << v;
     }
-    for(const auto& v : x.m_assoc) {
+    for(const auto& v : x.m_assoc_equal) {
         if(needs_comma) os << ", ";
         needs_comma = true;
         os << v.first << "=" << v.second;
+    }
+    for(const auto& v : x.m_assoc_bound) {
+        if(needs_comma) os << ", ";
+        needs_comma = true;
+        os << v.first << ": " << v.second;
     }
     os << ">";
     return os;
@@ -131,9 +136,13 @@ PathParams::PathParams(const PathParams& x):
     for(const auto& t : x.m_types)
         m_types.push_back(t.clone());
 
-    m_assoc.reserve( x.m_assoc.size() );
-    for(const auto& t : x.m_assoc)
-        m_assoc.push_back( ::std::make_pair(t.first, t.second.clone()) );
+    m_assoc_equal.reserve( x.m_assoc_equal.size() );
+    for(const auto& t : x.m_assoc_equal)
+        m_assoc_equal.push_back( ::std::make_pair(t.first, t.second.clone()) );
+
+    m_assoc_bound.reserve( x.m_assoc_bound.size() );
+    for(const auto& t : x.m_assoc_bound)
+        m_assoc_bound.push_back( ::std::make_pair(t.first, AST::Path(t.second)) );
 }
 Ordering PathParams::ord(const PathParams& x) const
 {
@@ -142,7 +151,9 @@ Ordering PathParams::ord(const PathParams& x) const
     if(rv != OrdEqual)  return rv;
     rv = ::ord(m_types, x.m_types);
     if(rv != OrdEqual)  return rv;
-    rv = ::ord(m_assoc, x.m_assoc);
+    rv = ::ord(m_assoc_equal, x.m_assoc_equal);
+    if(rv != OrdEqual)  return rv;
+    rv = ::ord(m_assoc_bound, x.m_assoc_bound);
     if(rv != OrdEqual)  return rv;
     return rv;
 }
@@ -321,24 +332,26 @@ Ordering Path::ord(const Path& x) const
 
 void Path::print_pretty(::std::ostream& os, bool is_type_context, bool is_debug) const
 {
-    TU_MATCH(Path::Class, (m_class), (ent),
-    (Invalid,
+    TU_MATCH_HDRA( (m_class), {)
+    TU_ARMA(Invalid, ent) {
         os << "/*inv*/";
         // NOTE: Don't print the binding for invalid paths
         return ;
-        ),
-    (Local,
+        }
+    TU_ARMA(Local, ent) {
         // Only print comment if there's no binding
-        if( m_bindings.value.is_Unbound() )
+        if( m_bindings.value.is_Unbound() && m_bindings.type.is_Unbound() )
         {
             if( is_debug )
                 os << "/*var*/";
         }
         else
-            assert( m_bindings.value.is_Variable() );
+        {
+            assert( m_bindings.value.is_Variable() || m_bindings.value.is_Generic() || m_bindings.type.is_TypeParameter() );
+        }
         os << ent.name;
-        ),
-    (Relative,
+        }
+    TU_ARMA(Relative, ent) {
         if( is_debug )
             os << ent.hygiene;
         for(const auto& n : ent.nodes)
@@ -348,24 +361,24 @@ void Path::print_pretty(::std::ostream& os, bool is_type_context, bool is_debug)
             }
             n.print_pretty(os, is_type_context);
         }
-        ),
-    (Self,
+        }
+    TU_ARMA(Self, ent) {
         os << "self";
         for(const auto& n : ent.nodes)
         {
             os << "::";
             n.print_pretty(os, is_type_context);
         }
-        ),
-    (Super,
+        }
+    TU_ARMA(Super, ent) {
         os << "super";
         for(const auto& n : ent.nodes)
         {
             os << "::";
             n.print_pretty(os, is_type_context);
         }
-        ),
-    (Absolute,
+        }
+    TU_ARMA(Absolute, ent) {
         if( ent.crate != "" )
             os << "::\"" << ent.crate << "\"";
         for(const auto& n : ent.nodes)
@@ -373,8 +386,8 @@ void Path::print_pretty(::std::ostream& os, bool is_type_context, bool is_debug)
             os << "::";
             n.print_pretty(os, is_type_context);
         }
-        ),
-    (UFCS,
+        }
+    TU_ARMA(UFCS, ent) {
         //os << "/*ufcs*/";
         if( ent.trait ) {
             os << "<" << *ent.type << " as ";
@@ -393,8 +406,8 @@ void Path::print_pretty(::std::ostream& os, bool is_type_context, bool is_debug)
             os << "::";
             n.print_pretty(os, is_type_context);
         }
-        )
-    )
+        }
+    }
     if( is_debug ) {
         os << "/*";
         bool printed = false;

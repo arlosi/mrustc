@@ -54,6 +54,7 @@ ExprNodeP Parse_ExprBlockNode(TokenStream& lex, bool is_unsafe/*=false*/)
     Token   tok;
 
     ::std::vector<ExprNodeP> nodes;
+    AST::AttributeList  attrs;
 
     ::std::shared_ptr<AST::Module> local_mod;
 
@@ -70,11 +71,7 @@ ExprNodeP Parse_ExprBlockNode(TokenStream& lex, bool is_unsafe/*=false*/)
     {
         last_value_yielded = false;
 
-        // NOTE: Doc comments can appear within a function and apply to the function
-        if( lex.parse_state().parent_attrs )
-        {
-            Parse_ParentAttrs(lex, *lex.parse_state().parent_attrs);
-        }
+        Parse_ParentAttrs(lex, attrs);
         if( LOOK_AHEAD(lex) == TOK_BRACE_CLOSE )
             break;
 
@@ -94,7 +91,9 @@ ExprNodeP Parse_ExprBlockNode(TokenStream& lex, bool is_unsafe/*=false*/)
     }
     GET_CHECK_TOK(tok, lex, TOK_BRACE_CLOSE);
 
-    return NEWNODE( AST::ExprNode_Block, is_unsafe, last_value_yielded, mv$(nodes), mv$(local_mod) );
+    auto rv = NEWNODE( AST::ExprNode_Block, is_unsafe, last_value_yielded, mv$(nodes), mv$(local_mod) );
+    rv->set_attrs( mv$(attrs) );
+    return rv;
 }
 
 /// Parse a single line in a block, handling items added to the local module
@@ -372,16 +371,16 @@ ExprNodeP Parse_IfStmt(TokenStream& lex)
 
     Token   tok;
     ExprNodeP cond;
-    AST::Pattern    pat;
-    bool if_let = false;
+    std::vector<AST::Pattern>   paterns;
 
     {
         SET_PARSE_FLAG(lex, disallow_struct_literal);
         if( GET_TOK(tok, lex) == TOK_RWORD_LET ) {
-            if_let = true;
             // Refutable pattern
-            pat = Parse_Pattern(lex, true);
-            GET_CHECK_TOK(tok, lex, TOK_EQUAL);
+            do {
+                paterns.push_back( Parse_Pattern(lex, true) );
+            } while(GET_TOK(tok, lex) == TOK_PIPE);
+            CHECK_TOK(tok, TOK_EQUAL);
             cond = Parse_Expr0(lex);
         }
         else {
@@ -412,8 +411,8 @@ ExprNodeP Parse_IfStmt(TokenStream& lex)
         PUTBACK(tok, lex);
     }
 
-    if( if_let )
-        return NEWNODE( AST::ExprNode_IfLet, ::std::move(pat), ::std::move(cond), ::std::move(code), ::std::move(altcode) );
+    if( !paterns.empty() )
+        return NEWNODE( AST::ExprNode_IfLet, ::std::move(paterns), ::std::move(cond), ::std::move(code), ::std::move(altcode) );
     else
         return NEWNODE( AST::ExprNode_If, ::std::move(cond), ::std::move(code), ::std::move(altcode) );
 }
@@ -1182,6 +1181,7 @@ ExprNodeP Parse_ExprVal(TokenStream& lex)
             }
         }
         if(0)
+    case TOK_RWORD_CRATE:
     case TOK_RWORD_SUPER:
         {
             PUTBACK(tok, lex);
@@ -1316,12 +1316,8 @@ ExprNodeP Parse_ExprVal(TokenStream& lex)
 }
 ExprNodeP Parse_ExprMacro(TokenStream& lex, AST::Path path)
 {
-    if( !path.is_trivial() ) {
-        TODO(lex.point_span(), "Support path macros - " << path);
-    }
-
     Token   tok;
-    auto name = path.m_class.is_Local() ? path.m_class.as_Local().name : path.nodes()[0].name();
+
     RcString ident;
     if( GET_TOK(tok, lex) == TOK_IDENT ) {
         ident = tok.istr();
@@ -1329,11 +1325,13 @@ ExprNodeP Parse_ExprMacro(TokenStream& lex, AST::Path path)
     else {
         PUTBACK(tok, lex);
     }
+
     TokenTree tt = Parse_TT(lex, true);
     if( tt.is_token() ) {
         throw ParseError::Unexpected(lex, tt.tok());
     }
-    return NEWNODE(AST::ExprNode_Macro, mv$(name), mv$(ident), mv$(tt));
+
+    return NEWNODE(AST::ExprNode_Macro, mv$(path), mv$(ident), mv$(tt));
 }
 
 // Token Tree Parsing

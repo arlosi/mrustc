@@ -765,7 +765,7 @@ namespace {
                         H::emit_proto(m_of, method, "__rust_", args); m_of << " {\n";
                         m_of << "\textern "; H::emit_proto(m_of, method, alloc_prefix, args); m_of << ";\n";
                         m_of << "\t";
-                        if (method.ret != AllocatorDataTy::Unit)
+                        if(method.ret != AllocatorDataTy::Unit)
                             m_of << "return ";
                         m_of << alloc_prefix << method.name << "(";
                         for(size_t j = 0; j < args.size(); j ++)
@@ -985,6 +985,7 @@ namespace {
                 case CodegenOutput::Executable:
                 case CodegenOutput::DynamicLibrary:
                     args.push_back(FMT("/Fe" << m_outfile_path));
+                    args.push_back(FMT("/Fo" << m_outfile_path << ".obj"));
 
                     switch(out_ty)
                     {

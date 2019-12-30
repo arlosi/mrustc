@@ -28,11 +28,11 @@ class CMacroRulesExpander:
     ::std::unique_ptr<TokenStream> expand_ident(const Span& sp, const ::AST::Crate& crate, const RcString& ident, const TokenTree& tt, AST::Module& mod) override
     {
         DEBUG("Parsing macro_rules! " << ident);
-        TTStream    lex(sp, tt);
+        TTStream    lex(sp, ParseState(crate.m_edition), tt);
         auto mac = Parse_MacroRules(lex);
         mod.add_macro( false, ident, mv$(mac) );
 
-        return ::std::unique_ptr<TokenStream>( new TTStreamO(sp, TokenTree()) );
+        return ::std::unique_ptr<TokenStream>( new TTStreamO(sp, ParseState(crate.m_edition), TokenTree()) );
     }
 };
 
@@ -48,8 +48,9 @@ class CMacroUseHandler:
         TU_IFLET( ::AST::Item, i, None, e,
             // Just ignore
         )
-        else TU_IFLET( ::AST::Item, i, Crate, ec_name,
-            const auto& ec = crate.m_extern_crates.at(ec_name.name.c_str());
+        else if(const auto* ec_item = i.opt_Crate())
+        {
+            const auto& ec = crate.m_extern_crates.at(ec_item->name.c_str());
             if( mi.has_sub_items() )
             {
                 TODO(sp, "Named import from extern crate");
@@ -71,13 +72,15 @@ class CMacroUseHandler:
                     mod.m_macro_imports.back().path.insert( mod.m_macro_imports.back().path.begin(), p.second.path.m_crate_name );
                 }
             }
-        )
-        else TU_IFLET( ::AST::Item, i, Module, submod,
+        }
+        else if( const auto* submod_p = i.opt_Module() )
+        {
+            const auto& submod = *submod_p;
             if( mi.has_sub_items() )
             {
                 for( const auto& si : mi.items() )
                 {
-                    const auto& name = si.name();
+                    const auto& name = si.name().as_trivial();
                     for( const auto& mr : submod.macros() )
                     {
                         if( mr.name == name ) {
@@ -112,7 +115,7 @@ class CMacroUseHandler:
                     mod.add_macro_import( mri.name, *mri.data );
                 }
             }
-        )
+        }
         else {
             ERROR(sp, E0000, "Use of #[macro_use] on non-module/crate - " << i.tag_str());
         }
@@ -131,7 +134,7 @@ class CMacroExportHandler:
         }
         else if( i.is_MacroInv() ) {
             const auto& mac = i.as_MacroInv();
-            if( mac.name() != "macro_rules" ) {
+            if( !(mac.path().is_trivial() && mac.path().as_trivial() == "macro_rules") ) {
                 ERROR(sp, E0000, "#[macro_export] is only valid on macro_rules!");
             }
             const auto& name = mac.input_ident();
@@ -165,7 +168,9 @@ class CMacroReexportHandler:
         {
             for( const auto& si : mi.items() )
             {
-                const auto& name = si.name();
+                if( !si.name().is_trivial() )
+                    ERROR(sp, E0000, "macro_reexport of non-trivial name - " << si.name());
+                const auto& name = si.name().as_trivial();
                 auto it = ext_crate.m_exported_macros.find(name);
                 if( it == ext_crate.m_exported_macros.end() )
                     ERROR(sp, E0000, "Could not find macro " << name << "! in crate " << crate_name);

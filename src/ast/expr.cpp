@@ -100,14 +100,14 @@ NODE(ExprNode_Try, {
 })
 
 NODE(ExprNode_Macro, {
-    os << m_name << "!";
+    os << m_path << "!";
     if( m_ident.size() > 0 )
     {
         os << " " << m_ident << " ";
     }
     os << "(" << " /*TODO*/ " << ")";
 },{
-    return NEWNODE(ExprNode_Macro, m_name, m_ident, m_tokens.clone());
+    return NEWNODE(ExprNode_Macro, AST::Path(m_path), m_ident, m_tokens.clone());
 })
 
 NODE(ExprNode_Asm, {
@@ -247,10 +247,20 @@ NODE(ExprNode_If, {
     return NEWNODE(ExprNode_If, m_cond->clone(), m_true->clone(), OPT_CLONE(m_false));
 })
 NODE(ExprNode_IfLet, {
-    os << "if let " << m_pattern << " = (" << *m_value << ") { " << *m_true << " }";
+    os << "if let ";
+    for(const auto& pat : m_patterns)
+    {
+        if(&pat != &m_patterns.front())
+            os << " | ";
+        os << pat;
+    }
+    os << " = (" << *m_value << ") { " << *m_true << " }";
     if(m_false) os << " else { " << *m_false << " }";
 },{
-    return NEWNODE(ExprNode_IfLet, m_pattern.clone(), m_value->clone(), m_true->clone(), OPT_CLONE(m_false));
+    decltype(m_patterns)    new_pats;
+    for(const auto& pat : m_patterns)
+        new_pats.push_back(pat.clone());
+    return NEWNODE(ExprNode_IfLet, mv$(new_pats), m_value->clone(), m_true->clone(), OPT_CLONE(m_false));
 })
 
 NODE(ExprNode_Integer, {

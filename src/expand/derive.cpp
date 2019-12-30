@@ -174,12 +174,15 @@ struct Deriver
         // - Searches within the type for a Path that starts with that param.
 
         unsigned int i = 0;
-        for(const auto& arg : params.ty_params())
+        for(const auto& arg : params.m_params)
         {
-            params.add_bound( ::AST::GenericBound::make_IsTrait({
-                {}, TypeRef(sp, arg.name(), i), {}, trait_path
-                }) );
-            i ++;
+            if(const auto* e = arg.opt_Type())
+            {
+                params.add_bound( ::AST::GenericBound::make_IsTrait({
+                    {}, TypeRef(sp, e->name(), i), {}, trait_path
+                    }) );
+                i ++;
+            }
         }
 
         // For each field type
@@ -260,50 +263,50 @@ struct Deriver
                     for(const auto& ty : node.args().m_types) {
                         self.add_field_bound_from_ty(params, out_list, ty);
                     }
-                    for(const auto& aty : node.args().m_assoc) {
+                    for(const auto& aty : node.args().m_assoc_equal) {
                         self.add_field_bound_from_ty(params, out_list, aty.second);
                     }
                 }
             }
         };
         // TODO: Locate type that is directly related to the type param.
-        TU_MATCH(TypeData, (ty.m_data), (e),
-        (None,
+        TU_MATCH_HDRA( (ty.m_data), {)
+        TU_ARMA(None, e) {
             // Wat?
-            ),
-        (Any,
+            }
+        TU_ARMA(Any, e) {
             // Nope.
-            ),
-        (Unit,
-            ),
-        (Bang,
-            ),
-        (Macro,
+            }
+        TU_ARMA(Unit, e) {
+            }
+        TU_ARMA(Bang, e) {
+            }
+        TU_ARMA(Macro, e) {
             // not allowed
-            ),
-        (Primitive,
-            ),
-        (Function,
+            }
+        TU_ARMA(Primitive, e) {
+            }
+        TU_ARMA(Function, e) {
             // TODO? Well... function types don't tend to depend on the trait?
-            ),
-        (Tuple,
+            }
+        TU_ARMA(Tuple, e) {
             for(const auto& sty : e.inner_types) {
                 add_field_bound_from_ty(params, out_list, sty);
             }
-            ),
-        (Borrow,
+            }
+        TU_ARMA(Borrow, e) {
             add_field_bound_from_ty(params, out_list, *e.inner);
-            ),
-        (Pointer,
+            }
+        TU_ARMA(Pointer, e) {
             add_field_bound_from_ty(params, out_list, *e.inner);
-            ),
-        (Array,
+            }
+        TU_ARMA(Array, e) {
             add_field_bound_from_ty(params, out_list, *e.inner);
-            ),
-        (Generic,
+            }
+        TU_ARMA(Generic, e) {
             // Although this is what we're looking for, it's already handled.
-            ),
-        (Path,
+            }
+        TU_ARMA(Path, e) {
             TU_MATCH(AST::Path::Class, (e.path.m_class), (pe),
             (Invalid,
                 // wut.
@@ -314,9 +317,9 @@ struct Deriver
                 if( pe.nodes.size() > 1 )
                 {
                     // Check if the first node of a relative is a generic param.
-                    for(const auto& typ : params.ty_params())
+                    for(const auto& param : params.m_params)
                     {
-                        if( pe.nodes.front().name() == typ.name() )
+                        if( TU_TEST1(param, Type, .name() == pe.nodes.front().name()) )
                         {
                             add_field_bound(out_list, ty);
                             break ;
@@ -334,14 +337,14 @@ struct Deriver
             (UFCS,
                 )
             )
-            ),
-        (TraitObject,
+            }
+        TU_ARMA(TraitObject, e) {
             // TODO: Should this be recursed?
-            ),
-        (ErasedType,
+            }
+        TU_ARMA(ErasedType, e) {
             // TODO: Should this be recursed?
-            )
-        )
+            }
+        }
     }
     void add_field_bound(::std::vector<TypeRef>& out_list, const TypeRef& type) const
     {
@@ -1355,7 +1358,7 @@ private:
         // TODO: What if the type is only conditionally copy? (generic over something)
         // - Could abuse specialisation support...
         // TODO: Are these bounds needed?
-        for(auto& b : ret.def().params().bounds())
+        for(auto& b : ret.def().params().m_bounds)
         {
             auto& be = b.as_IsTrait();
             be.trait = get_path(opts.core_name, "marker", "Copy");
@@ -2121,8 +2124,11 @@ static void derive_item(const Span& sp, const AST::Crate& crate, AST::Module& mo
     const auto& params = item.params();
     TypeRef type(sp, path);
     auto& types_args = type.path().nodes().back().args();
-    for( const auto& param : params.ty_params() ) {
-        types_args.m_types.push_back( TypeRef(TypeRef::TagArg(), sp, param.name()) );
+    for( const auto& param : params.m_params ) {
+        if(const auto* pe = param.opt_Type())
+        {
+            types_args.m_types.push_back( TypeRef(TypeRef::TagArg(), sp, pe->name()) );
+        }
     }
 
     DeriveOpts opts = {
@@ -2130,42 +2136,57 @@ static void derive_item(const Span& sp, const AST::Crate& crate, AST::Module& mo
         attr.items()
         };
 
-    ::std::vector< RcString>   missing_handlers;
+    ::std::vector<AST::AttributeName>   missing_handlers;
     for( const auto& trait : attr.items() )
     {
         DEBUG("- " << trait.name());
-        auto dp = find_impl(trait.name());
-        if( dp ) {
-            mod.add_item(sp, false, "", dp->handle_item(sp, opts, params, type, item), {} );
-            continue ;
-        }
 
-        // Support custom derive
-        auto mac_name = FMT("derive#" << trait.name());
-        // - Requires support all through the chain.
-        bool found = false;
-        for(const auto& mac_path : mod.m_macro_imports)
+        std::vector<RcString>   mac_path;
+
+        if( trait.name().elems.size() == 1 )
         {
-            if( mac_path.name == mac_name )
+            auto dp = find_impl(trait.name().elems[0]);
+            if( dp ) {
+                mod.add_item(sp, false, "", dp->handle_item(sp, opts, params, type, item), {} );
+                continue ;
+            }
+
+            auto mac_name = FMT("derive#" << trait.name().elems[0]);
+            for(const auto& mac_import : mod.m_macro_imports)
             {
-                if( mac_path.macro_ptr ) {
-                    // macro_rules! based derive?
-                    TODO(sp, "Custom derive using macro_rules?");
-                }
-                else {
-                    // proc_macro - Invoke the handler.
-                    DEBUG("proc_macro " << mac_path.path << ", attrs = " << attrs);
-                    auto lex = ProcMacro_Invoke(sp, crate, mac_path.path, attrs, path.nodes().back().name().c_str(), item);
-                    if( lex )
-                    {
-                        Parse_ModRoot_Items(*lex, mod);
-                        found = true;
+                if( mac_import.name == mac_name )
+                {
+                    if( mac_import.macro_ptr ) {
+                        // macro_rules! based derive?
+                        TODO(sp, "Custom derive using macro_rules?");
                     }
                     else {
-                        ERROR(sp, E0000, "proc_macro derive failed");
+                        // proc_macro - Invoke the handler.
+                        DEBUG("proc_macro " << mac_import.path << ", attrs = " << attrs);
+                        mac_path = mac_import.path;
+                        break;
                     }
-                    break;
                 }
+            }
+        }
+        else
+        {
+            auto mac_name = RcString::new_interned( FMT("derive#" << trait.name().elems.back()) );
+            mac_path = trait.name().elems;
+            mac_path.back() = mac_name;
+        }
+
+        bool found = false;
+        if( !mac_path.empty() )
+        {
+            auto lex = ProcMacro_Invoke(sp, crate, mac_path, attrs, path.nodes().back().name().c_str(), item);
+            if( lex )
+            {
+                Parse_ModRoot_Items(*lex, mod);
+                found = true;
+            }
+            else {
+                ERROR(sp, E0000, "proc_macro derive failed");
             }
         }
         if( found )
