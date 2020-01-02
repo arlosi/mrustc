@@ -131,6 +131,7 @@ void Expand_Attrs(const ::AST::AttributeList& attrs, AttrStage stage,  ::AST::Cr
     if( path.is_trivial() )
     {
         const auto& name = path.as_trivial();
+        // 1. Search compiler-provided proc macros
         for( const auto& m : g_macros )
         {
             if( name == m.first )
@@ -145,35 +146,36 @@ void Expand_Attrs(const ::AST::AttributeList& attrs, AttrStage stage,  ::AST::Cr
             const auto& mac_mod = *ll->m_item;
             for( const auto& mr : mac_mod.macros() )
             {
-                //DEBUG("- " << mr.name);
                 if( mr.name == name )
                 {
+                    DEBUG(mac_mod.path() << "::" << mr.name << " - Defined");
                     mr_ptr = &*mr.data;
                     break;
                 }
             }
-            if( !mr_ptr )
-            {
-                // Find the last macro of this name (allows later #[macro_use] definitions to override)
-                const MacroRules* last_mac = nullptr;
-                for( const auto& mri : mac_mod.macro_imports_res() )
-                {
-                    //DEBUG("- " << mri.name);
-                    if( mri.name == name )
-                    {
-                        if( input_ident != "" )
-                            ERROR(mi_span, E0000, "macro_rules! macros can't take an ident");
+            if( mr_ptr )
+                break;
 
-                        last_mac = mri.data;
-                    }
-                }
-                if( last_mac )
+            // Find the last macro of this name (allows later #[macro_use] definitions to override)
+            const MacroRules* last_mac = nullptr;
+            for( const auto& mri : mac_mod.macro_imports_res() )
+            {
+                //DEBUG("- " << mri.name);
+                if( mri.name == name )
                 {
-                    mr_ptr = last_mac;
+                    if( input_ident != "" )
+                        ERROR(mi_span, E0000, "macro_rules! macros can't take an ident");
+                    DEBUG("?::" << mri.name << " - Imported");
+
+                    last_mac = mri.data;
                 }
             }
+            if( last_mac )
+            {
+                mr_ptr = last_mac;
+                break;
+            }
         }
-
     }
     else
     {
@@ -340,13 +342,15 @@ void Expand_Attrs(const ::AST::AttributeList& attrs, AttrStage stage,  ::AST::Cr
                 {
                     ERROR(mi_span, E0000, "Cannot find module for " << path);
                 }
-                real_path.nodes().insert( real_path.nodes().end(), e.nodes.begin() + 1, e.nodes.end() );
+                for(size_t i = 1; i < e.nodes.size(); i ++)
+                    real_path.nodes().push_back(e.nodes[i]);
                 }
             TU_ARMA(Self, e) {
                 auto new_path = mod.path();
                 if(new_path.nodes().back().name().c_str()[0] == '#')
                     TODO(mi_span, "Handle self paths in anon");
-                new_path.nodes().insert( real_path.nodes().end(), e.nodes.begin(), e.nodes.end() );
+                for(size_t i = 0; i < e.nodes.size(); i ++)
+                    new_path.nodes().push_back(e.nodes[i]);
                 real_path = mv$(new_path);
                 }
             TU_ARMA(Super, e) {
@@ -359,7 +363,8 @@ void Expand_Attrs(const ::AST::AttributeList& attrs, AttrStage stage,  ::AST::Cr
                         ERROR(mi_span, E0000, "Invalid path (too many `super`) - " << path);
                     new_path.nodes().pop_back();
                 }
-                new_path.nodes().insert( real_path.nodes().end(), e.nodes.begin(), e.nodes.end() );
+                for(size_t i = 0; i < e.nodes.size(); i ++)
+                    new_path.nodes().push_back(e.nodes[i]);
                 real_path = mv$(new_path);
                 }
             TU_ARMA(Absolute, e) {
@@ -431,6 +436,7 @@ void Expand_Attrs(const ::AST::AttributeList& attrs, AttrStage stage,  ::AST::Cr
         if( input_ident != "" )
             ERROR(mi_span, E0000, "macro_rules! macros can't take an ident");
 
+        DEBUG("Invoking macro_rules " << path << " " << mr_ptr);
         auto e = Macro_InvokeRules(path.is_trivial() ? path.as_trivial().c_str() : "", *mr_ptr, mi_span, mv$(input_tt), crate, mod);
         e->parse_state().crate = &crate;
         return e;
@@ -1209,6 +1215,9 @@ void Expand_GenericParams(::AST::Crate& crate, LList<const AST::Module*> modstac
     for(auto& param_def : params.m_params)
     {
         TU_MATCH_HDRA( (param_def), {)
+        TU_ARMA(None, e) {
+            // Ignore
+            }
         TU_ARMA(Lifetime, e) {
             }
         TU_ARMA(Type, ty_def) {
@@ -1692,12 +1701,12 @@ void Expand(::AST::Crate& crate)
     // Fill macro/decorator map from init list
     while(g_decorators_list)
     {
-        g_decorators.insert(::std::make_pair( mv$(g_decorators_list->name), mv$(g_decorators_list->def) ));
+        g_decorators.insert(::std::make_pair( RcString::new_interned(g_decorators_list->name), mv$(g_decorators_list->def) ));
         g_decorators_list = g_decorators_list->prev;
     }
     while(g_macros_list)
     {
-        g_macros.insert(::std::make_pair(mv$(g_macros_list->name), mv$(g_macros_list->def)));
+        g_macros.insert(::std::make_pair(RcString::new_interned(g_macros_list->name), mv$(g_macros_list->def)));
         g_macros_list = g_macros_list->prev;
     }
     for(const auto& e : g_decorators)

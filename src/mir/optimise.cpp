@@ -25,7 +25,8 @@
 #define DUMP_BEFORE_CONSTPROPAGATE 0
 #define CHECK_AFTER_PASS    1
 #define CHECK_AFTER_ALL     1
-#define DUMP_AFTER_PASS     1
+#define DUMP_AFTER_PASS 1
+#define DUMP_AFTER_ALL  0
 
 #define DUMP_AFTER_DONE     1
 #define CHECK_AFTER_DONE    2   // 1 = Check before GC, 2 = check before and after GC
@@ -127,11 +128,24 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
         TRACE_FUNCTION_FR("Pass " << pass_num, change_happened);
 
         // >> Simplify call graph (removes gotos to blocks with a single use)
-        MIR_Optimise_BlockSimplify(state, fcn); // first optimisation, so don't care if it changed anything
+        if( MIR_Optimise_BlockSimplify(state, fcn) )
+        {
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
+#if CHECK_AFTER_ALL
+            MIR_Validate(resolve, path, fcn, args, ret_type);
+#endif
+            // NOTE: Don't set `change_happened`, as this is the first pass
+        }
+        //else { MIR_Validate(resolve, path, fcn, args, ret_type); }
 
         // >> Apply known constants
         if( MIR_Optimise_ConstPropagate(state, fcn) )
         {
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
@@ -145,36 +159,45 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
             while( MIR_Optimise_DeTemporary(state, fcn) )
             {
             }
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
             change_happened = true;
         }
+        //else { MIR_Validate(resolve, path, fcn, args, ret_type); }
 
         // >> Split apart aggregates that are never used such (Written once, never used directly)
         if( MIR_Optimise_SplitAggregates(state, fcn) )
         {
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
             change_happened = true;
         }
+        //else { MIR_Validate(resolve, path, fcn, args, ret_type); }
 
         // >> Replace values from composites if they're known
         //   - Undoes the inefficiencies from the `match (a, b) { ... }` pattern
         if( MIR_Optimise_PropagateKnownValues(state, fcn) )
         {
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
             change_happened = true;
         }
+        //else { MIR_Validate(resolve, path, fcn, args, ret_type); }
 
         // TODO: Convert `&mut *mut_foo` into `mut_foo` if the source is movable and not used afterwards
 
-#if DUMP_BEFORE_ALL || DUMP_BEFORE_PSA
-        if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
-#endif
         // >> Propagate/remove dead assignments
         if( MIR_Optimise_PropagateSingleAssignments(state, fcn) )
         {
@@ -182,11 +205,15 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
             while( MIR_Optimise_PropagateSingleAssignments(state, fcn) )
             {
             }
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
             change_happened = true;
         }
+        //else { MIR_Validate(resolve, path, fcn, args, ret_type); }
 
         // >> Move common statements (assignments) across gotos.
         //if( MIR_Optimise_CommonStatements(state, fcn) )
@@ -200,6 +227,9 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
         // >> Combine Duplicate Blocks
         if( MIR_Optimise_UnifyBlocks(state, fcn) )
         {
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
@@ -208,6 +238,9 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
         // >> Remove assignments of unsed drop flags
         if( MIR_Optimise_DeadDropFlags(state, fcn) )
         {
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
@@ -216,6 +249,9 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
         // >> Remove assignments that are never read
         if( MIR_Optimise_DeadAssignments(state, fcn) )
         {
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
@@ -224,6 +260,9 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
         // >> Remove no-op assignments
         if( MIR_Optimise_NoopRemoval(state, fcn) )
         {
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
@@ -233,6 +272,9 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
         // >> Remove re-borrow operations that don't need to exist
         if( MIR_Optimise_UselessReborrows(state, fcn) )
         {
+            #if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+            #endif
             #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
             #endif
@@ -242,6 +284,9 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
         // >> If the first statement of a block is an assignment, and the last op of the previous is to that assignment's source, move up.
         if( MIR_Optimise_GotoAssign(state, fcn) )
         {
+            #if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+            #endif
             #if CHECK_AFTER_ALL
             MIR_Validate(resolve, path, fcn, args, ret_type);
             #endif
@@ -256,6 +301,9 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
                 // Apply cleanup again (as monomorpisation in inlining may have exposed a vtable call)
                 MIR_Cleanup(resolve, path, fcn, args, ret_type);
                 //MIR_Dump_Fcn(::std::cout, fcn);
+#if DUMP_AFTER_ALL
+                if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
 #if CHECK_AFTER_ALL
                 MIR_Validate(resolve, path, fcn, args, ret_type);
 #endif
@@ -274,11 +322,26 @@ void MIR_Optimise(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
             MIR_Validate(resolve, path, fcn, args, ret_type);
             #endif
         }
+        //else { MIR_Validate(resolve, path, fcn, args, ret_type); }
 
         if( MIR_Optimise_GarbageCollect_Partial(state, fcn) )
         {
             change_happened = true;
+#if DUMP_AFTER_ALL
+            if( debug_enabled() ) MIR_Dump_Fcn(::std::cout, fcn);
+#endif
+#if CHECK_AFTER_ALL
+            MIR_Validate(resolve, path, fcn, args, ret_type);
+#endif
         }
+        //else { MIR_Validate(resolve, path, fcn, args, ret_type); }
+
+#if 0
+        if(change_happened)
+        {
+            MIR_Validate_Full(resolve, path, fcn, args, ret_type);
+        }
+#endif
         pass_num += 1;
     } while( change_happened );
 
@@ -811,6 +874,8 @@ namespace
 bool MIR_Optimise_BlockSimplify(::MIR::TypeResolve& state, ::MIR::Function& fcn)
 {
     bool changed = false;
+    TRACE_FUNCTION_FR("", changed);
+
     struct H {
         static ::MIR::BasicBlockId get_new_target(const ::MIR::TypeResolve& state, ::MIR::BasicBlockId bb)
         {
@@ -843,7 +908,7 @@ bool MIR_Optimise_BlockSimplify(::MIR::TypeResolve& state, ::MIR::Function& fcn)
                 auto new_bb = H::get_new_target(state, e);
                 if( new_bb != e )
                 {
-                    DEBUG("BB" << &block - fcn.blocks.data() << "/TERM: " << e << " => " << new_bb);
+                    DEBUG("BB" << &block - fcn.blocks.data() << "/TERM: Rewrite bb reference " << e << " => " << new_bb);
                     e = new_bb;
                     changed = true;
                 }
@@ -930,16 +995,19 @@ bool MIR_Optimise_BlockSimplify(::MIR::TypeResolve& state, ::MIR::Function& fcn)
     // >> If a block GOTOs a block that is just a `RETURN` or `DIVERGE`, then change terminator
     for(auto& block : fcn.blocks)
     {
+        state.set_cur_stmt_term(&block - &fcn.blocks.front());
         if(block.terminator.is_Goto())
         {
             auto tgt = block.terminator.as_Goto();
             if( !fcn.blocks[tgt].statements.empty() ) {
             }
             else if( fcn.blocks[tgt].terminator.is_Return() ) {
+                DEBUG(state << " -> Return");
                 block.terminator = MIR::Terminator::make_Return({});
                 changed = true;
             }
             else if( fcn.blocks[tgt].terminator.is_Diverge() ) {
+                DEBUG(state << " -> Diverge");
                 block.terminator = MIR::Terminator::make_Diverge({});
                 changed = true;
             }
@@ -1836,7 +1904,9 @@ bool MIR_Optimise_DeTemporary_SingleSetAndUse(::MIR::TypeResolve& state, ::MIR::
                 const auto& src = set_stmt.as_Assign().src.as_Use();
 
                 // Check if the source of initial assignment is invalidated in the meantime.
-                bool invalidated = IterPathRes::Complete != iter_path(fcn, set_loc_next, slot.use_loc,
+                auto use_loc_inc = slot.use_loc;
+                use_loc_inc.stmt_idx += 1;
+                bool invalidated = IterPathRes::Complete != iter_path(fcn, set_loc_next, use_loc_inc,
                         [&](auto loc, const auto& stmt)->bool{ return check_invalidates_lvalue(stmt, src); },
                         [&](auto loc, const auto& term)->bool{ return check_invalidates_lvalue(term, src); }
                         );
@@ -1862,7 +1932,7 @@ bool MIR_Optimise_DeTemporary_SingleSetAndUse(::MIR::TypeResolve& state, ::MIR::
                     if( slot.use_loc.stmt_idx < use_bb.statements.size() )
                     {
                         auto& use_stmt = use_bb.statements[slot.use_loc.stmt_idx];
-                        DEBUG("Replace " << this_var << " with " << src << " in " << use_stmt);
+                        DEBUG("Replace " << this_var << " with " << src << " in BB" << slot.use_loc.bb_idx << "/" << slot.use_loc.stmt_idx  << " " << use_stmt);
                         bool found = visit_mir_lvalues_mut(use_stmt, replace_cb);
                         if( !found )
                         {
@@ -2297,6 +2367,7 @@ bool MIR_Optimise_DeTemporary(::MIR::TypeResolve& state, ::MIR::Function& fcn)
                     {
                         top_lv = new_val.clone_wrapped(top_lv.m_wrappers.begin(), top_lv.m_wrappers.end());
                         DEBUG(state << "> Replace (and keep) Local(" << it->first << ") with " << new_val);
+                        changed = true;
                     }
                     // - Top-level (directly used) also good.
                     else if( top_level && top_usage == ValUsage::Move )
@@ -2306,6 +2377,7 @@ bool MIR_Optimise_DeTemporary(::MIR::TypeResolve& state, ::MIR::Function& fcn)
                         DEBUG(state << "> Replace (and remove) Local(" << it->first << ") with " << new_val);
                         statements_to_remove.push_back( it->second );
                         local_assignments.erase(it);
+                        changed = true;
                     }
                     // - Otherwise, remove the record.
                     else
@@ -2379,6 +2451,8 @@ bool MIR_Optimise_DeTemporary(::MIR::TypeResolve& state, ::MIR::Function& fcn)
             // > It isn't removed if it's used as a Copy, so that's not a problem.
             bb.statements.erase( bb.statements.begin() + statements_to_remove.back() );
             statements_to_remove.pop_back();
+
+            changed = true;
         }
     }
 
@@ -3232,6 +3306,17 @@ bool MIR_Optimise_ConstPropagate(::MIR::TypeResolve& state, ::MIR::Function& fcn
                                 {
                                 }
                                 break;
+                            case ::HIR::CoreType::F32:
+                            case ::HIR::CoreType::F64:
+                                // TODO: Cast to float
+                                break;
+                            case ::HIR::CoreType::Char:
+                                // TODO: Only `u8` can be casted to char
+                                break;
+                            case ::HIR::CoreType::Bool:
+                                break;
+                            case ::HIR::CoreType::Str:
+                                MIR_BUG(state, "Casting to str");
                             }
                         }
                     }
@@ -3265,6 +3350,17 @@ bool MIR_Optimise_ConstPropagate(::MIR::TypeResolve& state, ::MIR::Function& fcn
                         case ::HIR::CoreType::Isize:
                             new_value = ::MIR::Constant::make_Int({ static_cast<int32_t>(v), ct });
                             break;
+                        case ::HIR::CoreType::F32:
+                        case ::HIR::CoreType::F64:
+                            // TODO: Cast to float (can variants be casted to float?)
+                            break;
+                        case ::HIR::CoreType::Char:
+                            // TODO: Only `u8` can be casted to char (what about a u8 discriminator?)
+                            break;
+                        case ::HIR::CoreType::Bool:
+                            break;
+                        case ::HIR::CoreType::Str:
+                            MIR_BUG(state, "Casting to str");
                         }
                     }
                     else
@@ -3455,7 +3551,7 @@ bool MIR_Optimise_ConstPropagate(::MIR::TypeResolve& state, ::MIR::Function& fcn
                                     }
                                 }
                                 break;
-                                
+
                             case ::MIR::eBinOp::BIT_SHL: {
                                 uint64_t shift_len = 0;
                                 TU_MATCH_HDRA( (val_r), {)
@@ -4880,7 +4976,7 @@ bool MIR_Optimise_GotoAssign(::MIR::TypeResolve& state, ::MIR::Function& fcn)
         unsigned n_read = 0;
         unsigned n_borrow = 0;
         visit_mir_lvalues(state, fcn, [&](const auto& lv, auto vu) {
-            if(lv == src) {
+            if(lv.m_root == src.m_root) {
                 switch(vu)
                 {
                 case ValUsage::Read:
@@ -4898,7 +4994,7 @@ bool MIR_Optimise_GotoAssign(::MIR::TypeResolve& state, ::MIR::Function& fcn)
             return true;
             });
         state.set_cur_stmt(bb_idx, 0);
-        if( n_read > 1 ) {
+        if( n_read > 1 || n_borrow > 0 ) {
             DEBUG(state << "Source " << src << " is read " << n_read << " times and borrowed " << n_borrow);
             continue ;
         }
@@ -5129,12 +5225,13 @@ bool MIR_Optimise_UselessReborrows(::MIR::TypeResolve& state, ::MIR::Function& f
 // --------------------------------------------------------------------
 bool MIR_Optimise_GarbageCollect_Partial(::MIR::TypeResolve& state, ::MIR::Function& fcn)
 {
+    bool rv = false;
+    TRACE_FUNCTION_FR("", rv);
     ::std::vector<bool> visited( fcn.blocks.size() );
     visit_blocks(state, fcn, [&visited](auto bb, const auto& /*block*/) {
             assert( !visited[bb] );
             visited[bb] = true;
             });
-    bool rv = false;
     for(unsigned int i = 0; i < visited.size(); i ++)
     {
         auto& blk = fcn.blocks[i];
