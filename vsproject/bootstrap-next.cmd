@@ -3,7 +3,6 @@
 
 set WORKDIR=%~dp0rustc_bootstrap\
 set RUSTC_VERSION_NEXT=1.30.0
-set MAKEFLAGS=-j8
 set PREFIX=%~dp0\output-1.29.0\prefix\
 
 curl -O https://static.rust-lang.org/dist/rustc-%RUSTC_VERSION_NEXT%-src.tar.gz
@@ -17,8 +16,8 @@ mkdir %WORKDIR%mrustc
 tar -xzf rustc-%RUSTC_VERSION_NEXT%-src.tar.gz -C %WORKDIR%mrustc/
 
 echo [build]> %WORKDIR%mrustc\rustc-%RUSTC_VERSION_NEXT%-src\config.toml
-echo cargo = "%PREFIX%bin/cargo.exe">> %WORKDIR%mrustc\rustc-%RUSTC_VERSION_NEXT%-src\config.toml
-echo rustc = "%PREFIX%bin/rustc_binary.exe">> %WORKDIR%mrustc\rustc-%RUSTC_VERSION_NEXT%-src\config.toml
+echo cargo = "%PREFIX:\=/%bin/cargo.exe">> %WORKDIR%mrustc\rustc-%RUSTC_VERSION_NEXT%-src\config.toml
+echo rustc = "%PREFIX:\=/%bin/rustc_binary.exe">> %WORKDIR%mrustc\rustc-%RUSTC_VERSION_NEXT%-src\config.toml
 echo full-bootstrap = true>> %WORKDIR%mrustc\rustc-%RUSTC_VERSION_NEXT%-src\config.toml
 echo vendor = true>> %WORKDIR%mrustc\rustc-%RUSTC_VERSION_NEXT%-src\config.toml
 
