@@ -25,7 +25,7 @@ copy %OUTDIR%rustc-build\rustc_binary.exe %BINDIR_S%rustc.exe
 copy %OUTDIR%rustc-build\rustc_binary.exe %BINDIR%rustc_m.exe
 copy %OUTDIR%cargo-build\cargo.exe %BINDIR%\cargo.exe
 
-goto :skip1
+@REM goto :skip1
 
 @REM Hard-coded build of libstd
 %BINDIR_S%rustc --crate-type rlib --crate-name core -L %LIBDIR_S% %RUST_SRC%libcore/lib.rs -o %LIBDIR_S%libcore.rlib
