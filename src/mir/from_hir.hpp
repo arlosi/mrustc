@@ -98,7 +98,7 @@ struct SplitEnd {
 
 TAGGED_UNION(ScopeType, Owning,
     (Owning, struct {
-        bool is_temporary{};
+        bool is_temporary;
         ::std::vector<unsigned int> slots;  // List of owned variables
         }),
     (Split, struct {

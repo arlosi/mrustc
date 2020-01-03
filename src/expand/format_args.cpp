@@ -201,7 +201,6 @@ namespace {
 
         const char* s = format_string.c_str();
         const char* const s_end = s + format_string.length();
-
         for( ; s < s_end; s ++)
         {
             if( *s != '{' )
