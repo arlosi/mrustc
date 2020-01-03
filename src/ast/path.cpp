@@ -56,6 +56,7 @@ PathBinding_Type PathBinding_Type::clone() const
     (Static,    os << "Static";  ),
     (Function,  os << "Function";),
     (EnumVar,  os << "EnumVar(" << i.idx << ")"; ),
+    (Generic, os << "Param(" << i.index << ")"; ),
     (Variable, os << "Var(" << i.slot << ")"; )
     )
     return os;
@@ -68,6 +69,7 @@ PathBinding_Value PathBinding_Value::clone() const
     (Static  , return PathBinding_Value(e); ),
     (Function, return PathBinding_Value(e); ),
     (EnumVar , return PathBinding_Value::make_EnumVar(e);  ),
+    (Generic, return PathBinding_Value::make_Generic(e); ),
     (Variable, return PathBinding_Value::make_Variable(e); )
     )
     throw "BUG: Fell off the end of PathBinding_Value::clone";
