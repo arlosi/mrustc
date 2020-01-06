@@ -170,8 +170,8 @@ struct ProcMacroInv:
 #else
     // POSIX
     pid_t   child_pid;  // Questionably needed
-    int    child_stdin;
-    int    child_stdout;
+     int    child_stdin;
+     int    child_stdout;
     // NOTE: stderr stays as our stderr
 #endif
     bool    m_eof_hit = false;
@@ -897,13 +897,13 @@ ProcMacroInv::ProcMacroInv(const Span& sp, const char* executable, const ::HIR::
     CloseHandle(stdout_write);
     CloseHandle(piProcInfo.hThread);
 #else
-    int stdin_pipes[2];
+     int    stdin_pipes[2];
     if( pipe(stdin_pipes) != 0 )
     {
         BUG(sp, "Unable to create stdin pipe pair for proc macro, " << strerror(errno));
     }
     this->child_stdin = stdin_pipes[1]; // Write end
-    int stdout_pipes[2];
+     int    stdout_pipes[2];
     if( pipe(stdout_pipes) != 0)
     {
         BUG(sp, "Unable to create stdout pipe pair for proc macro, " << strerror(errno));
