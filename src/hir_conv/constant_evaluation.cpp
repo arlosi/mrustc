@@ -397,17 +397,14 @@ namespace HIR {
             }
             throw "";
             };
-        auto read_param = [&](const ::MIR::Param& p) -> ::HIR::Literal
-            {
-                TU_MATCH(::MIR::Param, (p), (e),
-                (LValue,
-                    return local_state.read_lval(e);
-                    ),
-                (Constant,
-                    return const_to_lit(e);
-                    )
-                )
-                throw "";
+        auto read_param = [&](const ::MIR::Param& p) -> ::HIR::Literal {
+            TU_MATCH_HDRA( (p), { )
+            TU_ARMA(LValue, e)
+                return local_state.read_lval(e);
+            TU_ARMA(Constant, e)
+                return const_to_lit(e);
+            }
+            throw "";
             };
 
         unsigned int cur_block = 0;
@@ -1070,27 +1067,32 @@ namespace {
         {
             ::HIR::Visitor::visit_type(ty);
 
-            TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Array, e,
+            if(auto* e = ty.m_data.opt_Array())
+            {
                 TRACE_FUNCTION_FR(ty, ty);
-                if( e.size_val == ~0u )
+                if( e->size.is_Unevaluated() )
                 {
-                    assert(e.size);
-                    assert(*e.size);
-                    const auto& expr_ptr = *e.size;
+                    const auto& expr_ptr = *e->size.as_Unevaluated();
                     auto ty_name = FMT("ty_" << &ty << "#");
 
                     auto nvs = NewvalState { *m_mod, *m_mod_path, ty_name };
                     auto eval = ::HIR::Evaluator { expr_ptr->span(), m_crate, nvs };
                     auto val = eval.evaluate_constant(::HIR::ItemPath(*m_mod_path, ty_name.c_str()), expr_ptr, ::HIR::CoreType::Usize);
-                    if( val.is_Defer() )
-                        TODO(expr_ptr->span(), "Handle defer for array sizes");
-                    else if( val.is_Integer() )
-                        e.size_val = static_cast<size_t>(val.as_Integer());
+                    if( val.is_Defer() ) {
+                        //TODO(expr_ptr->span(), "Handle defer for array sizes");
+                    }
+                    else if( val.is_Integer() ) {
+                        e->size = val.as_Integer();
+                        DEBUG("Array " << ty << " - size = " << e->size.as_Known());
+                    }
                     else
                         ERROR(expr_ptr->span(), E0000, "Array size isn't an integer, got " << val.tag_str());
                 }
-                DEBUG("Array " << ty << " - size = " << e.size_val);
-            )
+                else
+                {
+                    DEBUG("Array " << ty << " - size = " << e->size.as_Known());
+                }
+            }
 
             if( m_recurse_types )
             {

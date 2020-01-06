@@ -1000,7 +1000,7 @@ bool ProcMacroInv::check_good()
 {
     char    v;
 #ifdef _WIN32
-    DWORD rv{};
+    DWORD rv = 0;
     if( !ReadFile(this->child_stdout, &v, 1, &rv, nullptr) )
     {
         DEBUG("Error reading from child, " << GetLastError());
@@ -1031,7 +1031,7 @@ void ProcMacroInv::send_u8(uint8_t v)
     if( m_dump_file.is_open() )
         m_dump_file.put(v);
 #ifdef _WIN32
-    DWORD bytesWritten{};
+    DWORD bytesWritten = 0;
     if( !WriteFile(this->child_stdin, &v, 1, &bytesWritten, nullptr) || bytesWritten != 1 )
         BUG(m_parent_span, "Error writing to child, " << GetLastError());
 #else
@@ -1046,7 +1046,7 @@ void ProcMacroInv::send_bytes(const void* val, size_t size)
     if( m_dump_file.is_open() )
         m_dump_file.write( reinterpret_cast<const char*>(val), size);
 #ifdef _WIN32
-    DWORD bytesWritten{};
+    DWORD bytesWritten = 0;
     if( !WriteFile(this->child_stdin, val, size, &bytesWritten, nullptr) || bytesWritten != size )
         BUG(m_parent_span, "Error writing to child, " << GetLastError());
 #else

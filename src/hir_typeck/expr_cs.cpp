@@ -3400,68 +3400,45 @@ namespace {
             check_type_resolved_pp(sp, path.m_params, tmp);
         }
         void check_type_resolved(const Span& sp, ::HIR::TypeRef& ty, const ::HIR::TypeRef& top_type) const {
-            TRACE_FUNCTION_F(ty);
-            TU_MATCH(::HIR::TypeRef::Data, (ty.m_data), (e),
-            (Infer,
-                auto new_ty = this->ivars.get_type(ty).clone();
-                // - Move over before checking, so that the source type mentions the correct ivar
-                ty = mv$(new_ty);
-                if( ty.m_data.is_Infer() ) {
-                    ERROR(sp, E0000, "Failed to infer type " << ty << " in "  << top_type);
+            class InnerVisitor:
+                public HIR::Visitor
+            {
+                const ExprVisitor_Apply& parent;
+                const Span& sp;
+                const ::HIR::TypeRef& top_type;
+
+            public:
+                InnerVisitor(const ExprVisitor_Apply& parent, const Span& sp, const ::HIR::TypeRef& top_type)
+                    :parent(parent)
+                    ,sp(sp)
+                    ,top_type(top_type)
+                {
                 }
-                check_type_resolved(sp, ty, top_type);
-                ),
-            (Diverge,
-                // Leaf
-                ),
-            (Primitive,
-                // Leaf
-                ),
-            (Path,
-                check_type_resolved_path(sp, e.path, top_type);
-                ),
-            (Generic,
-                // Leaf - no ivars
-                ),
-            (TraitObject,
-                check_type_resolved_pp(sp, e.m_trait.m_path.m_params, top_type);
-                for(auto& at : e.m_trait.m_type_bounds)
-                    check_type_resolved(sp, at.second, top_type);
-                for(auto& marker : e.m_markers) {
-                    check_type_resolved_pp(sp, marker.m_params, top_type);
+
+                void visit_path(::HIR::Path& path, HIR::Visitor::PathContext pc) override
+                {
+                    if( path.m_data.is_UfcsUnknown() )
+                        ERROR(sp, E0000, "UfcsUnknown " << path << " left in " << top_type);
+                    ::HIR::Visitor::visit_path(path, pc);
                 }
-                ),
-            (ErasedType,
-                ASSERT_BUG(sp, e.m_origin != ::HIR::SimplePath(), "ErasedType " << ty << " wasn't bound to its origin");
-                check_type_resolved_path(sp, e.m_origin, top_type);
-                ),
-            (Array,
-                this->check_type_resolved(sp, *e.inner, top_type);
-                ),
-            (Slice,
-                this->check_type_resolved(sp, *e.inner, top_type);
-                ),
-            (Tuple,
-                for(auto& st : e)
-                    this->check_type_resolved(sp, st, top_type);
-                ),
-            (Borrow,
-                this->check_type_resolved(sp, *e.inner, top_type);
-                ),
-            (Pointer,
-                this->check_type_resolved(sp, *e.inner, top_type);
-                ),
-            (Function,
-                this->check_type_resolved(sp, *e.m_rettype, top_type);
-                for(auto& st : e.m_arg_types)
-                    this->check_type_resolved(sp, st, top_type);
-                ),
-            (Closure,
-                this->check_type_resolved(sp, *e.m_rettype, top_type);
-                for(auto& st : e.m_arg_types)
-                    this->check_type_resolved(sp, st, top_type);
-                )
-            )
+                void visit_type(::HIR::TypeRef& ty) override
+                {
+                    if( ty.m_data.is_Infer() )
+                    {
+                        auto new_ty = parent.ivars.get_type(ty).clone();
+                        // - Move over before checking, so that the source type mentions the correct ivar
+                        ty = mv$(new_ty);
+                        if( ty.m_data.is_Infer() ) {
+                            ERROR(sp, E0000, "Failed to infer type " << ty << " in "  << top_type);
+                        }
+                    }
+                    
+                    ::HIR::Visitor::visit_type(ty);
+                }
+            };
+
+            InnerVisitor v(*this, sp, top_type);
+            v.visit_type(ty);
         }
 
         void check_types_equal(const Span& sp, const ::HIR::TypeRef& l, const ::HIR::TypeRef& r) const
@@ -3857,7 +3834,7 @@ void Context::equate_types_inner(const Span& sp, const ::HIR::TypeRef& li, const
                 ),
             (Array,
                 this->equate_types_inner(sp, *l_e.inner, *r_e.inner);
-                if( l_e.size_val != r_e.size_val ) {
+                if( l_e.size != r_e.size ) {
                     ERROR(sp, E0000, "Type mismatch between " << l_t << " and " << r_t << " - sizes differ");
                 }
                 ),
@@ -4965,7 +4942,7 @@ void Context::handle_pattern_direct_inner(const Span& sp, ::HIR::Pattern& pat, c
                         return true;
                     )
                     else TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Array, te,
-                        if( te.size_val != size ) {
+                        if( te.size.as_Known() != size ) {
                             ERROR(sp, E0000, "Slice pattern on an array if differing size");
                         }
                         context.equate_types(sp, *te.inner, inner);
@@ -4999,10 +4976,10 @@ void Context::handle_pattern_direct_inner(const Span& sp, ::HIR::Pattern& pat, c
         )
         else TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Array, te,
             inner = te.inner->clone();
-            if( te.size_val < min_len ) {
+            if( te.size.as_Known() < min_len ) {
                 ERROR(sp, E0000, "Slice pattern on an array smaller than the pattern");
             }
-            unsigned extra_len = te.size_val - min_len;
+            unsigned extra_len = te.size.as_Known() - min_len;
 
             if( e.extra_bind.is_valid() ) {
                 this->add_binding_inner( sp, e.extra_bind, ::HIR::TypeRef::new_array(inner.clone(), extra_len) );
@@ -5051,10 +5028,10 @@ void Context::handle_pattern_direct_inner(const Span& sp, ::HIR::Pattern& pat, c
                     // Array - Equate inners and check size
                     else TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Array, te,
                         context.equate_types(this->sp, this->inner, *te.inner);
-                        if( te.size_val < this->min_size ) {
+                        if( te.size.as_Known() < this->min_size ) {
                             ERROR(sp, E0000, "Slice pattern on an array smaller than the pattern");
                         }
-                        unsigned extra_len = te.size_val - this->min_size;
+                        unsigned extra_len = te.size.as_Known() - this->min_size;
 
                         if( this->var_ty != ::HIR::TypeRef() ) {
                             context.equate_types(this->sp, this->var_ty, ::HIR::TypeRef::new_array(this->inner.clone(), extra_len) );
@@ -6511,7 +6488,7 @@ namespace {
                     }
                     else
                     {
-                        TODO(sp, "Borrow strength reduction");
+                        TODO(sp, "Borrow strength reduction with no node pointer - " << src << " -> " << dst);
                     }
                 }
                 else if( dep->type == se.type ) {
