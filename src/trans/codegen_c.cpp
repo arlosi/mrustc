@@ -455,8 +455,55 @@ namespace {
                     << "\treturn __builtin_add_overflow_i" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
                     << "}\n"
                     << "static inline uint64_t __builtin_bswap64(uint64_t v) { return _byteswap_uint64(v); }\n"
-                    << "static inline uint8_t InterlockedCompareExchange8(volatile uint8_t* v, uint8_t n, uint8_t e){ return _InterlockedCompareExchange8(v, n, e); }\n"
-                    << "static inline uint32_t InterlockedCompareExchange32(volatile uint32_t* v, uint32_t n, uint32_t e){ return InterlockedCompareExchange(v, n, e); }\n"
+                    << "#define InterlockedCompareExchange8Acquire _InterlockedCompareExchange8\n"
+                    << "#define InterlockedCompareExchange8Release _InterlockedCompareExchange8\n"
+                    << "#define InterlockedCompareExchange8NoFence _InterlockedCompareExchange8\n"
+                    << "#define InterlockedCompareExchange8 _InterlockedCompareExchange8\n"
+                    << "#define InterlockedCompareExchange16Acquire InterlockedCompareExchangeAcquire16\n"
+                    << "#define InterlockedCompareExchange16Release InterlockedCompareExchangeRelease16\n"
+                    << "#define InterlockedCompareExchange16NoFence InterlockedCompareExchangeNoFence16\n"
+                    << "#define InterlockedCompareExchange64Acquire InterlockedCompareExchangeAcquire64\n"
+                    << "#define InterlockedCompareExchange32 InterlockedCompareExchange\n"
+                    << "#define InterlockedCompareExchange64Release InterlockedCompareExchangeRelease64\n"
+                    << "#define InterlockedCompareExchange64NoFence InterlockedCompareExchangeNoFence64\n"
+                    << "#define InterlockedExchangeAdd8Acquire InterlockedExchangeAdd8\n"
+                    << "#define InterlockedExchangeAdd8Release InterlockedExchangeAdd8\n"
+                    << "#define InterlockedExchangeAdd8NoFence InterlockedExchangeAdd8\n"
+                    << "#define InterlockedExchangeAdd16Acquire _InterlockedExchangeAdd16\n"
+                    << "#define InterlockedExchangeAdd16Release _InterlockedExchangeAdd16\n"
+                    << "#define InterlockedExchangeAdd16NoFence _InterlockedExchangeAdd16\n"
+                    << "#define InterlockedExchangeAdd16 _InterlockedExchangeAdd16\n"
+                    << "#define InterlockedExchangeAdd64Acquire InterlockedExchangeAddAcquire64\n"
+                    << "#define InterlockedExchangeAdd64Release InterlockedExchangeAddRelease64\n"
+                    << "#define InterlockedExchangeAdd64NoFence InterlockedExchangeAddNoFence64\n"
+                    << "#define InterlockedExchange8Acquire InterlockedExchange8\n"
+                    << "#define InterlockedExchange8Release InterlockedExchange8\n"
+                    << "#define InterlockedExchange8NoFence InterlockedExchange8\n"
+                    << "#define InterlockedExchange16Acquire InterlockedExchange16\n"
+                    << "#define InterlockedExchange16Release InterlockedExchange16\n"
+                    << "#define InterlockedExchange16NoFence InterlockedExchange16\n"
+                    << "#define InterlockedExchangeRelease InterlockedExchange\n"
+                    << "#define InterlockedExchange64Acquire InterlockedExchangeAcquire64\n"
+                    << "#define InterlockedExchange64Release InterlockedExchange64\n"
+                    << "#define InterlockedExchange64NoFence InterlockedExchangeNoFence64\n"
+                    << "#define InterlockedAnd8Acquire InterlockedAnd8\n"
+                    << "#define InterlockedAnd8Release InterlockedAnd8\n"
+                    << "#define InterlockedAnd8NoFence InterlockedAnd8\n"
+                    << "#define InterlockedAnd16Acquire InterlockedAnd16\n"
+                    << "#define InterlockedAnd16Release InterlockedAnd16\n"
+                    << "#define InterlockedAnd16NoFence InterlockedAnd16\n"
+                    << "#define InterlockedOr8Acquire InterlockedOr8\n"
+                    << "#define InterlockedOr8Release InterlockedOr8\n"
+                    << "#define InterlockedOr8NoFence InterlockedOr8\n"
+                    << "#define InterlockedOr16Acquire InterlockedOr16\n"
+                    << "#define InterlockedOr16Release InterlockedOr16\n"
+                    << "#define InterlockedOr16NoFence InterlockedOr16\n"
+                    << "#define InterlockedXor8Acquire InterlockedXor8\n"
+                    << "#define InterlockedXor8Release InterlockedXor8\n"
+                    << "#define InterlockedXor8NoFence InterlockedXor8\n"
+                    << "#define InterlockedXor16Acquire InterlockedXor16\n"
+                    << "#define InterlockedXor16Release InterlockedXor16\n"
+                    << "#define InterlockedXor16NoFence InterlockedXor16\n"
                     << "#pragma comment(linker, \"/alternatename:TYPE_INFO_VTABLE=??_7type_info@@6B@\")\n";
                     ;
                 // Atomic hackery
@@ -4439,6 +4486,17 @@ namespace {
                 }
                 throw "";
                 };
+            auto get_atomic_suffix_msvc = [&](Ordering o)->const char* {
+                switch(o)
+                {
+                case Ordering::SeqCst:  return "";
+                case Ordering::Acquire: return "Acquire";
+                case Ordering::Release: return "Release";
+                case Ordering::Relaxed: return "NoFence";
+                case Ordering::AcqRel:  return "";  // this is either Acquire or Release
+                }
+                throw "";
+            };
             auto get_atomic_ordering = [&](const RcString& name, size_t prefix_len)->Ordering {
                     if( name.size() < prefix_len )
                     {
@@ -4490,7 +4548,7 @@ namespace {
                         MIR_BUG(mir_res, "Unknown primitive for getting size- " << ty);
                     }
                 };
-            auto emit_msvc_atomic_op = [&](const char* name, Ordering ordering, bool is_before_size=false) {
+            auto emit_msvc_atomic_op = [&](const char* name, Ordering ordering) {
                 m_of << name;
                 switch (params.m_types.at(0).m_data.as_Primitive())
                 {
@@ -4521,6 +4579,7 @@ namespace {
                 default:
                     MIR_BUG(mir_res, "Unsupported atomic type - " << params.m_types.at(0));
                 }
+                m_of << get_atomic_suffix_msvc(ordering);
                 m_of << "(";
                 };
             auto emit_atomic_cast = [&]() {
@@ -4539,7 +4598,7 @@ namespace {
                     break;
                 case Compiler::Msvc:
                     emit_lvalue(e.ret_val); m_of << "._0 = ";
-                    emit_msvc_atomic_op("InterlockedCompareExchange", Ordering::SeqCst, true);  // TODO: Use ordering, but which one?
+                    emit_msvc_atomic_op("InterlockedCompareExchange", Ordering::SeqCst);  // TODO: Use ordering, but which one?
                     // Slot, Exchange (new value), Comparand (expected value) - Note different order to the gcc/stdc version
                     emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(2)); m_of << ", "; emit_param(e.args.at(1)); m_of << ")";
                     m_of << ";\n\t";
@@ -4566,9 +4625,9 @@ namespace {
                 case Compiler::Msvc:
                     switch(op)
                     {
-                    case AtomicOp::Add: emit_msvc_atomic_op("InterlockedExchangeAdd", ordering, true);    break;
+                    case AtomicOp::Add: emit_msvc_atomic_op("InterlockedExchangeAdd", ordering);    break;
                     case AtomicOp::Sub:
-                        emit_msvc_atomic_op("InterlockedExchangeAdd", ordering, true);
+                        emit_msvc_atomic_op("InterlockedExchangeAdd", ordering);
                         emit_param(e.args.at(0)); m_of << ", ~(";
                         emit_param(e.args.at(1)); m_of << ")+1)";
                         return ;
@@ -5386,7 +5445,7 @@ namespace {
                     break;
                 case Compiler::Msvc:
                     //emit_msvc_atomic_op("InterlockedRead", ordering); emit_param(e.args.at(0)); m_of << ")";
-                    emit_msvc_atomic_op("InterlockedCompareExchange", ordering, true); emit_param(e.args.at(0)); m_of << ", 0, 0)";
+                    emit_msvc_atomic_op("InterlockedCompareExchange", ordering); emit_param(e.args.at(0)); m_of << ", 0, 0)";
                     break;
                 }
             }
@@ -5461,7 +5520,7 @@ namespace {
                 case Compiler::Msvc:
                     if(ordering == Ordering::Release)
                         ordering = Ordering::SeqCst;
-                    emit_msvc_atomic_op("InterlockedExchange", ordering, true);
+                    emit_msvc_atomic_op("InterlockedExchange", ordering);
                     emit_param(e.args.at(0)); m_of << ", ";
                     emit_param(e.args.at(1)); m_of << ")";
                     break;
