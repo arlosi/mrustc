@@ -48,7 +48,7 @@ echo directory = "%RUST_SRC:\=/%vendor" >> %CARGO_CONFIG%
 
 @REM Real build of libstd
 set CARGO_TARGET_DIR=%OUTDIR%build-std
-set RUSTC=%BINDIR_S%rustc 
+set RUSTC=%BINDIR_S%rustc.exe
 set RUSTC_BOOTSTRAP=1
 set RUSTFLAGS=-Z force-unstable-if-unmarked
 %BINDIR%cargo build --manifest-path %RUST_SRC%libstd\Cargo.toml -j 1 --release --features panic-unwind
