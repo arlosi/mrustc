@@ -305,13 +305,17 @@ namespace {
                 break;
             case Compiler::Msvc:
                 m_of
-                    << "static inline int32_t __builtin_popcount(uint64_t v) {\n"
-                    << "\treturn __popcnt64(v);\n"
+                    << "static inline int32_t __builtin_popcountll(uint64_t v) {\n"
+                    << "\treturn __popcnt(v & 0xFFFFFFFF) + __popcnt(v >> 32);\n"
                     << "}\n"
-                    << "static inline int32_t __builtin_ctz(uint32_t v) { int rv; _BitScanForward(&rv, v); return rv; }\n"
-                    << "static inline int32_t __builtin_clz(uint32_t v) { int rv; _BitScanReverse(&rv, v); return 31 - rv; }\n"
-                    << "static inline int32_t __builtin_ctz64(uint64_t v) { int rv; _BitScanForward64(&rv, v); return rv; }\n"
-                    << "static inline int32_t __builtin_clz64(uint64_t v) { int rv; _BitScanReverse64(&rv, v); return 63 - rv; }\n"
+                    << "static inline int __builtin_ctz(uint32_t v) { int rv; _BitScanForward(&rv, v); return rv; }\n"
+                    << "static inline int __builtin_clz(uint32_t v) { int rv; _BitScanReverse(&rv, v); return 31 - rv; }\n"
+                    << "static inline uint64_t __builtin_clz64(uint64_t v) {\n"
+                    << "\treturn ( (v >> 32) != 0 ? __builtin_clz(v>>32) : 32 + __builtin_clz(v) );\n"
+                    << "}\n"
+                    << "static inline uint64_t __builtin_ctz64(uint64_t v) {\n"
+                    << "\treturn ((v&0xFFFFFFFF) == 0 ? __builtin_ctz(v>>32) + 32 : __builtin_ctz(v));\n"
+                    << "}\n"
                     << "static inline bool __builtin_mul_overflow_u8(uint8_t a, uint8_t b, uint8_t* out) {\n"
                     << "\t*out = a*b;\n"
                     << "\tif(b == 0) return false;\n"
@@ -582,7 +586,7 @@ namespace {
                     << "static inline uint128_t xor128(uint128_t a, uint128_t b) { uint128_t v = { a.lo ^ b.lo, a.hi ^ b.hi }; return v; }\n"
                     << "static inline uint128_t shl128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = a.lo << b; v.hi = (a.hi << b) | (a.lo >> (64 - b)); } else { v.hi = a.lo << (b - 64); v.lo = 0; } return v; }\n"
                     << "static inline uint128_t shr128(uint128_t a, uint32_t b) { uint128_t v; if(b == 0) { return a; } else if(b < 64) { v.lo = (a.lo >> b)|(a.hi << (64 - b)); v.hi = a.hi >> b; } else { v.lo = a.hi >> (b - 64); v.hi = 0; } return v; }\n"
-                    << "static inline uint128_t popcount128(uint128_t a) { uint128_t v = { __builtin_popcount(a.lo) + __builtin_popcount(a.hi), 0 }; return v; }\n"
+                    << "static inline uint128_t popcount128(uint128_t a) { uint128_t v = { __builtin_popcountll(a.lo) + __builtin_popcountll(a.hi), 0 }; return v; }\n"
                     << "static inline uint128_t __builtin_bswap128(uint128_t v) { uint128_t rv = { __builtin_bswap64(v.hi), __builtin_bswap64(v.lo) }; return rv; }\n"
                     << "static inline uint128_t intrinsic_ctlz_u128(uint128_t v) {\n"
                     << "\tuint128_t rv = { (v.hi != 0 ? __builtin_clz64(v.hi) : (v.lo != 0 ? 64 + __builtin_clz64(v.lo) : 128)), 0 };\n"
@@ -3700,33 +3704,10 @@ namespace {
                 MIR_ASSERT(mir_res, ty.m_data.is_Primitive(), "i128/u128 cast from non-primitive");
                 switch (ve.type.m_data.as_Primitive())
                 {
-                case ::HIR::CoreType::U128:
-                    if (ty == ::HIR::CoreType::I128) {
-                        // Cast from u128 to i128
-                        emit_lvalue(dst);
-                        m_of << ".lo = ";
-                        emit_lvalue(ve.val);
-                        m_of << ".lo; ";
-                        emit_lvalue(dst);
-                        m_of << ".hi = ";
-                        emit_lvalue(ve.val);
-                        m_of << ".hi";
-                    }
-                    else {
-                        // Cast from small to u128
-                        emit_lvalue(dst);
-                        m_of << ".lo = ";
-                        emit_lvalue(ve.val);
-                        m_of << "; ";
-                        emit_lvalue(dst);
-                        m_of << ".hi = ";
-                        emit_lvalue(ve.val);
-                        m_of << " < 0 ? -1 : 0";
-                    }
-                    break;
                 case ::HIR::CoreType::I128:
-                    if (ty == ::HIR::CoreType::U128) {
-                        // Cast from i128 to u128
+                case ::HIR::CoreType::U128:
+                    if (ty == ::HIR::CoreType::I128 || ty == ::HIR::CoreType::U128) {
+                        // Cast between i128 and u128
                         emit_lvalue(dst);
                         m_of << ".lo = ";
                         emit_lvalue(ve.val);
@@ -3737,7 +3718,7 @@ namespace {
                         m_of << ".hi";
                     }
                     else {
-                        // Cast from small to i128
+                        // Cast from small to i128/u128
                         emit_lvalue(dst);
                         m_of << ".lo = ";
                         emit_lvalue(ve.val);
@@ -3753,19 +3734,6 @@ namespace {
                 case ::HIR::CoreType::I32:
                 case ::HIR::CoreType::I64:
                 case ::HIR::CoreType::Isize:
-                    emit_lvalue(dst);
-                    m_of << " = ";
-                    switch (ty.m_data.as_Primitive())
-                    {
-                    case ::HIR::CoreType::U128:
-                    case ::HIR::CoreType::I128:
-                        emit_lvalue(ve.val);
-                        m_of << ".lo";
-                        break;
-                    default:
-                        MIR_BUG(mir_res, "Unreachable");
-                    }
-                    break;
                 case ::HIR::CoreType::U8:
                 case ::HIR::CoreType::U16:
                 case ::HIR::CoreType::U32:
@@ -5297,7 +5265,7 @@ namespace {
                 }
                 else
                 {
-                    m_of << "__builtin_popcount";
+                    m_of << "__builtin_popcountll";
                 }
                 m_of << "("; emit_param(e.args.at(0)); m_of << ")";
             }
