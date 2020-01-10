@@ -1,6 +1,6 @@
 @set RUSTC_VERSION=1.29.0
 @set CFG_COMPILER_HOST_TRIPLE=x86_64-pc-windows-msvc
-@set OUTDIR=output-%RUSTC_VERSION%
+@set OUTDIR=output-%RUSTC_VERSION%\
 @set STD_ARGS=--output-dir %OUTDIR%
 @set STD_ARGS=%STD_ARGS% --vendor-dir ..\rustc-%RUSTC_VERSION%-src\src\vendor
 @set STD_ARGS=%STD_ARGS% --script-overrides ..\script-overrides\stable-%RUSTC_VERSION%-windows
