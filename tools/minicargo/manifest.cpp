@@ -847,7 +847,7 @@ void PackageManifest::load_build_script(const ::std::string& path)
             }
             // - Ignore
             else {
-                if( this->m_links != "" && line.find_first_of('-') == ::std::string::npos ) {
+                if( this->m_links != "" ) {
                     ::std::string   varname;
                     varname += "DEP_";
                     for(auto c : this->m_links)

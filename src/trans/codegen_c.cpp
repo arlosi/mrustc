@@ -133,23 +133,6 @@ namespace {
 }
 
 namespace {
-    struct MsvcDetection
-    {
-        ::std::string   path_vcvarsall;
-    };
-
-    MsvcDetection detect_msvc()
-    {
-        auto rv = MsvcDetection {
-            "C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC\\vcvarsall.bat"
-            };
-        if( ::std::ifstream("P:\\Program Files (x86)\\Microsoft Visual Studio\\VS2015\\VC\\vcvarsall.bat").is_open() )
-        {
-            rv.path_vcvarsall = "P:\\Program Files (x86)\\Microsoft Visual Studio\\VS2015\\VC\\vcvarsall.bat";
-        }
-        return rv;
-    }
-
     enum class AtomicOp
     {
         Add,
@@ -476,15 +459,56 @@ namespace {
                     << "\treturn __builtin_add_overflow_i" << Target_GetCurSpec().m_arch.m_pointer_bits << "(a, b, out);\n"
                     << "}\n"
                     << "static inline uint64_t __builtin_bswap64(uint64_t v) { return _byteswap_uint64(v); }\n"
-                    << "static inline uint8_t InterlockedCompareExchange8(volatile uint8_t* v, uint8_t n, uint8_t e){ return _InterlockedCompareExchange8(v, n, e); }\n"
-                    << "static inline uint8_t InterlockedCompareExchangeNoFence8(volatile uint8_t* v, uint8_t n, uint8_t e){ return InterlockedCompareExchange8(v, n, e); }\n"
-                    << "static inline uint8_t InterlockedCompareExchangeAcquire8(volatile uint8_t* v, uint8_t n, uint8_t e){ return InterlockedCompareExchange8(v, n, e); }\n"
-                    << "static inline uint8_t InterlockedCompareExchangeRelease8(volatile uint8_t* v, uint8_t n, uint8_t e){ return InterlockedCompareExchange8(v, n, e); }\n"
-                    //<< "static inline uint8_t InterlockedExchange8(volatile uint8_t* v, uint8_t n){ return _InterlockedExchange8((volatile char*)v, (char)n); }\n"
-                    << "static inline uint8_t InterlockedExchangeNoFence8(volatile uint8_t* v, uint8_t n){ return InterlockedExchange8(v, n); }\n"
-                    << "static inline uint8_t InterlockedExchangeAcquire8(volatile uint8_t* v, uint8_t n){ return InterlockedExchange8(v, n); }\n"
-                    << "static inline uint8_t InterlockedExchangeRelease8(volatile uint8_t* v, uint8_t n){ return InterlockedExchange8(v, n); }\n"
-                    << "static inline uint8_t InterlockedCompareExchange32(volatile uint32_t* v, uint32_t n, uint32_t e){ return InterlockedCompareExchange(v, n, e); }\n"
+                    << "#define InterlockedCompareExchange8Acquire _InterlockedCompareExchange8\n"
+                    << "#define InterlockedCompareExchange8Release _InterlockedCompareExchange8\n"
+                    << "#define InterlockedCompareExchange8NoFence _InterlockedCompareExchange8\n"
+                    << "#define InterlockedCompareExchange8 _InterlockedCompareExchange8\n"
+                    << "#define InterlockedCompareExchange16Acquire InterlockedCompareExchangeAcquire16\n"
+                    << "#define InterlockedCompareExchange16Release InterlockedCompareExchangeRelease16\n"
+                    << "#define InterlockedCompareExchange16NoFence InterlockedCompareExchangeNoFence16\n"
+                    << "#define InterlockedCompareExchange64Acquire InterlockedCompareExchangeAcquire64\n"
+                    << "#define InterlockedCompareExchange32 InterlockedCompareExchange\n"
+                    << "#define InterlockedCompareExchange64Release InterlockedCompareExchangeRelease64\n"
+                    << "#define InterlockedCompareExchange64NoFence InterlockedCompareExchangeNoFence64\n"
+                    << "#define InterlockedExchangeAdd8Acquire InterlockedExchangeAdd8\n"
+                    << "#define InterlockedExchangeAdd8Release InterlockedExchangeAdd8\n"
+                    << "#define InterlockedExchangeAdd8NoFence InterlockedExchangeAdd8\n"
+                    << "#define InterlockedExchangeAdd16Acquire _InterlockedExchangeAdd16\n"
+                    << "#define InterlockedExchangeAdd16Release _InterlockedExchangeAdd16\n"
+                    << "#define InterlockedExchangeAdd16NoFence _InterlockedExchangeAdd16\n"
+                    << "#define InterlockedExchangeAdd16 _InterlockedExchangeAdd16\n"
+                    << "#define InterlockedExchangeAdd64Acquire InterlockedExchangeAddAcquire64\n"
+                    << "#define InterlockedExchangeAdd64Release InterlockedExchangeAddRelease64\n"
+                    << "#define InterlockedExchangeAdd64NoFence InterlockedExchangeAddNoFence64\n"
+                    << "#define InterlockedExchange8Acquire InterlockedExchange8\n"
+                    << "#define InterlockedExchange8Release InterlockedExchange8\n"
+                    << "#define InterlockedExchange8NoFence InterlockedExchange8\n"
+                    << "#define InterlockedExchange16Acquire InterlockedExchange16\n"
+                    << "#define InterlockedExchange16Release InterlockedExchange16\n"
+                    << "#define InterlockedExchange16NoFence InterlockedExchange16\n"
+                    << "#define InterlockedExchangeRelease InterlockedExchange\n"
+                    << "#define InterlockedExchange64Acquire InterlockedExchangeAcquire64\n"
+                    << "#define InterlockedExchange64Release InterlockedExchange64\n"
+                    << "#define InterlockedExchange64NoFence InterlockedExchangeNoFence64\n"
+                    << "#define InterlockedAnd8Acquire InterlockedAnd8\n"
+                    << "#define InterlockedAnd8Release InterlockedAnd8\n"
+                    << "#define InterlockedAnd8NoFence InterlockedAnd8\n"
+                    << "#define InterlockedAnd16Acquire InterlockedAnd16\n"
+                    << "#define InterlockedAnd16Release InterlockedAnd16\n"
+                    << "#define InterlockedAnd16NoFence InterlockedAnd16\n"
+                    << "#define InterlockedOr8Acquire InterlockedOr8\n"
+                    << "#define InterlockedOr8Release InterlockedOr8\n"
+                    << "#define InterlockedOr8NoFence InterlockedOr8\n"
+                    << "#define InterlockedOr16Acquire InterlockedOr16\n"
+                    << "#define InterlockedOr16Release InterlockedOr16\n"
+                    << "#define InterlockedOr16NoFence InterlockedOr16\n"
+                    << "#define InterlockedXor8Acquire InterlockedXor8\n"
+                    << "#define InterlockedXor8Release InterlockedXor8\n"
+                    << "#define InterlockedXor8NoFence InterlockedXor8\n"
+                    << "#define InterlockedXor16Acquire InterlockedXor16\n"
+                    << "#define InterlockedXor16Release InterlockedXor16\n"
+                    << "#define InterlockedXor16NoFence InterlockedXor16\n"
+                    << "#pragma comment(linker, \"/alternatename:TYPE_INFO_VTABLE=??_7type_info@@6B@\")\n"
                     ;
                 // Atomic hackery
                 for(int sz = 8; sz <= 64; sz *= 2)
@@ -791,7 +815,10 @@ namespace {
                             H::ty_args(args, method.args[j]);
                         H::emit_proto(m_of, method, "__rust_", args); m_of << " {\n";
                         m_of << "\textern "; H::emit_proto(m_of, method, alloc_prefix, args); m_of << ";\n";
-                        m_of << "\treturn " << alloc_prefix << method.name << "(";
+                        m_of << "\t";
+                        if(method.ret != AllocatorDataTy::Unit)
+                            m_of << "return ";
+                        m_of << alloc_prefix << method.name << "(";
                         for(size_t j = 0; j < args.size(); j ++)
                         {
                             if( j != 0 )
@@ -985,13 +1012,9 @@ namespace {
                 }
                 break;
             case Compiler::Msvc:
-                // TODO: Look up these paths in the registry and use CreateProcess instead of system
-                // - OR, run `vcvarsall` and get the required environment variables and PATH from it?
-                args.push_back(detect_msvc().path_vcvarsall);
-                args.push_back( Target_GetCurSpec().m_backend_c.m_c_compiler );
-                args.push_back("&");
                 args.push_back("cl.exe");
                 args.push_back("/nologo");
+                args.push_back("/F52428800"); // Increase max stack size from 1MB to 50 MB.
                 args.push_back(m_outfile_path_c.c_str());
                 switch(opt.opt_level)
                 {
@@ -1028,7 +1051,9 @@ namespace {
 
                     for( const auto& crate : m_crate.m_ext_crates )
                     {
-                        args.push_back(crate.second.m_path + ".obj");
+                        if (crate.second.m_path.compare(crate.second.m_path.size() - 5, 5, ".rlib") == 0) {
+                            args.push_back(crate.second.m_path + ".obj");
+                        }
                     }
                     // Crate-specified libraries
                     for(const auto& lib : m_crate.m_ext_libs) {
@@ -1996,14 +2021,118 @@ namespace {
             TRACE_FUNCTION_F(p);
 
             auto type = params.monomorph(m_resolve, item.m_type);
-            emit_ctype( type, FMT_CB(ss, ss << Trans_Mangle(p);) );
-            m_of << " = ";
-            emit_literal(type, item.m_value_res, params);
-            m_of << ";";
-            m_of << "\t// static " << p << " : " << type;
-            m_of << "\n";
+            if (!is_zero_literal(type, item.m_value_res, params)) {
+                emit_ctype(type, FMT_CB(ss, ss << Trans_Mangle(p);));
+                m_of << " = ";
+                emit_literal(type, item.m_value_res, params);
+                m_of << ";";
+                m_of << "\t// static " << p << " : " << type;
+                m_of << "\n";
+            }
 
             m_mir_res = nullptr;
+        }
+        bool is_zero_literal(const ::HIR::TypeRef& ty, const ::HIR::Literal& lit, const Trans_Params& params) {
+            ::HIR::TypeRef  tmp;
+            auto monomorph_with = [&](const ::HIR::PathParams& pp, const ::HIR::TypeRef& ty)->const ::HIR::TypeRef& {
+                if( monomorphise_type_needed(ty) ) {
+                    tmp = monomorphise_type_with(sp, ty, monomorphise_type_get_cb(sp, nullptr, &pp, nullptr), false);
+                    m_resolve.expand_associated_types(sp, tmp);
+                    return tmp;
+                }
+                else {
+                    return ty;
+                }
+                };
+            auto get_inner_type = [&](unsigned int var, unsigned int idx)->const ::HIR::TypeRef& {
+                TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Array, te,
+                    return *te.inner;
+                )
+                else TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Path, te,
+                    const auto& pp = te.path.m_data.as_Generic().m_params;
+                    TU_MATCHA((te.binding), (pbe),
+                    (Unbound, MIR_BUG(*m_mir_res, "Unbound type path " << ty); ),
+                    (Opaque, MIR_BUG(*m_mir_res, "Opaque type path " << ty); ),
+                    (ExternType, MIR_BUG(*m_mir_res, "Extern type literal " << ty); ),
+                    (Struct,
+                        TU_MATCHA( (pbe->m_data), (se),
+                        (Unit,
+                            MIR_BUG(*m_mir_res, "Unit struct " << ty);
+                            ),
+                        (Tuple,
+                            return monomorph_with(pp, se.at(idx).ent);
+                            ),
+                        (Named,
+                            return monomorph_with(pp, se.at(idx).second.ent);
+                            )
+                        )
+                        ),
+                    (Union,
+                        MIR_TODO(*m_mir_res, "Union literals");
+                        ),
+                    (Enum,
+                        MIR_ASSERT(*m_mir_res, pbe->m_data.is_Data(), "Getting inner type of a non-Data enum");
+                        const auto& evar = pbe->m_data.as_Data().at(var);
+                        return monomorph_with(pp, evar.type);
+                        )
+                    )
+                    throw "";
+                )
+                else TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Tuple, te,
+                    return te.at(idx);
+                )
+                else {
+                    MIR_TODO(*m_mir_res, "Unknown type in list literal - " << ty);
+                }
+                };
+            TU_MATCHA( (lit), (e),
+            (List,
+                bool all_zero = true;
+                for(unsigned int i = 0; i < e.size(); i ++) {
+                    const auto& ity = get_inner_type(0, i);
+                    all_zero &= is_zero_literal(ity, e[i], params);
+                }
+                return all_zero;
+                ),
+            (Variant,
+                MIR_ASSERT(*m_mir_res, ty.m_data.is_Path(), "");
+                MIR_ASSERT(*m_mir_res, ty.m_data.as_Path().binding.is_Enum(), "");
+                const auto* repr = Target_GetTypeRepr(sp, m_resolve, ty);
+                const auto& enm = *ty.m_data.as_Path().binding.as_Enum();
+                if( repr->variants.is_None() )
+                {
+                    return true;
+                }
+                else if( const auto* ve = repr->variants.opt_NonZero() )
+                {
+                    if( e.idx == ve->zero_variant )
+                    {
+                        return true;
+                    }
+                    else
+                    {
+                        return is_zero_literal(get_inner_type(e.idx, 0), *e.val, params);
+                    }
+                }
+                else if( enm.is_value() )
+                {
+                    return false;
+                }
+                else
+                {
+                    const auto& ity = get_inner_type(e.idx, 0);
+                    return repr->variants.as_Values().values[e.idx] == 0 && is_zero_literal(ity, *e.val, params);
+                }
+                ),
+            (Integer, return e == 0; ),
+            (Float, return e == 0; ),
+            (String, return false; ),
+            (Invalid, return false; ),
+            (Defer, return false; ),
+            (BorrowPath, return false; ),
+            (BorrowData, return false; )
+            )
+            return false;
         }
         void emit_float(double v) {
             if( ::std::isnan(v) ) {
@@ -4190,7 +4319,7 @@ namespace {
             }
             else if( matches_template("xacquire; lock; cmpxchgq $2, $1", /*input=*/{"r", "{rax}"}, /*output=*/{"={rax}", "+*m"}) )
             {
-                m_of << indent << "InterlockedCompareExchange64Acquire(";
+                m_of << indent << "InterlockedCompareExchangeAcquire64(";
                 emit_lvalue(e.outputs[1].second); m_of << ",";
                 emit_lvalue(e.inputs[0].second); m_of << ",";
                 emit_lvalue(e.inputs[1].second);
@@ -4199,7 +4328,7 @@ namespace {
             }
             else if( matches_template("xrelease; lock; cmpxchgq $2, $1", /*input=*/{"r", "{rax}"}, /*output=*/{"={rax}", "+*m"}) )
             {
-                m_of << indent << "InterlockedCompareExchange64Release(";
+                m_of << indent << "InterlockedCompareExchangeRelease64(";
                 emit_lvalue(e.outputs[1].second); m_of << ",";
                 emit_lvalue(e.inputs[0].second); m_of << ",";
                 emit_lvalue(e.inputs[1].second);
@@ -4399,41 +4528,39 @@ namespace {
                         MIR_BUG(mir_res, "Unknown primitive for getting size- " << ty);
                     }
                 };
-            auto emit_msvc_atomic_op = [&](const char* name, Ordering ordering, bool is_before_size=false) {
-                const char* o_before = is_before_size ? get_atomic_suffix_msvc(ordering) : "";
-                const char* o_after  = is_before_size ? "" : get_atomic_suffix_msvc(ordering);
+            auto emit_msvc_atomic_op = [&](const char* name, Ordering ordering) {
+                m_of << name;
                 switch (params.m_types.at(0).m_data.as_Primitive())
                 {
                 case ::HIR::CoreType::U8:
                 case ::HIR::CoreType::I8:
-                    m_of << name << o_before << "8" << o_after << "(";
+                    m_of << "8";
                     break;
                 case ::HIR::CoreType::U16:
                 case ::HIR::CoreType::I16:
-                    m_of << name << o_before << "16" << o_after << "(";
+                    m_of << "16";
                     break;
                 case ::HIR::CoreType::U32:
                 case ::HIR::CoreType::I32:
-                    m_of << name << o_before << o_after << "(";
                     break;
                 case ::HIR::CoreType::U64:
                 case ::HIR::CoreType::I64:
-                    m_of << name << o_before << "64" << o_after << "(";
+                    m_of << "64";
                     break;
                 case ::HIR::CoreType::Usize:
                 case ::HIR::CoreType::Isize:
-                    m_of << name << o_before;
                     if( Target_GetCurSpec().m_arch.m_pointer_bits == 64 )
                         m_of << "64";
                     else if( Target_GetCurSpec().m_arch.m_pointer_bits == 32 )
                         m_of << "";
                     else
                         MIR_TODO(mir_res, "Handle non 32/64 bit pointer types");
-                    m_of << o_after << "(";
                     break;
                 default:
                     MIR_BUG(mir_res, "Unsupported atomic type - " << params.m_types.at(0));
                 }
+                m_of << get_atomic_suffix_msvc(ordering);
+                m_of << "(";
                 };
             auto emit_atomic_cast = [&]() {
                 m_of << "(_Atomic "; emit_ctype(params.m_types.at(0)); m_of << "*)";
@@ -4451,7 +4578,7 @@ namespace {
                     break;
                 case Compiler::Msvc:
                     emit_lvalue(e.ret_val); m_of << "._0 = ";
-                    emit_msvc_atomic_op("InterlockedCompareExchange", Ordering::SeqCst, true);  // TODO: Use ordering, but which one?
+                    emit_msvc_atomic_op("InterlockedCompareExchange", Ordering::SeqCst);  // TODO: Use ordering, but which one?
                     // Slot, Exchange (new value), Comparand (expected value) - Note different order to the gcc/stdc version
                     emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(2)); m_of << ", "; emit_param(e.args.at(1)); m_of << ")";
                     m_of << ";\n\t";
@@ -4476,30 +4603,11 @@ namespace {
                     m_of << "("; emit_atomic_cast(); emit_param(e.args.at(0)); m_of << ", "; emit_param(e.args.at(1)); m_of << ", " << get_atomic_ty_gcc(ordering) << ")";
                     break;
                 case Compiler::Msvc:
-                    if( params.m_types.at(0) == ::HIR::CoreType::U8 || params.m_types.at(0) == ::HIR::CoreType::I8 )
-                    {
-                        //_InterlockedCompareExchange8 ?
-                        if( params.m_types.at(0) == ::HIR::CoreType::U8 )
-                            m_of << "*(volatile uint8_t*)";
-                        else
-                            m_of << "*(volatile int8_t*)";
-                        emit_param(e.args.at(0));
-                        switch(op)
-                        {
-                        case AtomicOp::Add: m_of << " += "; break;
-                        case AtomicOp::Sub: m_of << " -= "; break;
-                        case AtomicOp::And: m_of << " &= "; break;
-                        case AtomicOp::Or:  m_of << " |= "; break;
-                        case AtomicOp::Xor: m_of << " ^= "; break;
-                        }
-                        emit_param(e.args.at(1));
-                        return ;
-                    }
                     switch(op)
                     {
-                    case AtomicOp::Add: emit_msvc_atomic_op("InterlockedExchangeAdd", ordering, true);    break;
+                    case AtomicOp::Add: emit_msvc_atomic_op("InterlockedExchangeAdd", ordering);    break;
                     case AtomicOp::Sub:
-                        emit_msvc_atomic_op("InterlockedExchangeAdd", ordering, true);
+                        emit_msvc_atomic_op("InterlockedExchangeAdd", ordering);
                         emit_param(e.args.at(0)); m_of << ", ~(";
                         emit_param(e.args.at(1)); m_of << ")+1)";
                         return ;
@@ -5317,7 +5425,7 @@ namespace {
                     break;
                 case Compiler::Msvc:
                     //emit_msvc_atomic_op("InterlockedRead", ordering); emit_param(e.args.at(0)); m_of << ")";
-                    emit_msvc_atomic_op("InterlockedCompareExchange", ordering, true); emit_param(e.args.at(0)); m_of << ", 0, 0)";
+                    emit_msvc_atomic_op("InterlockedCompareExchange", ordering); emit_param(e.args.at(0)); m_of << ", 0, 0)";
                     break;
                 }
             }
@@ -5392,7 +5500,7 @@ namespace {
                 case Compiler::Msvc:
                     if(ordering == Ordering::Release)
                         ordering = Ordering::SeqCst;
-                    emit_msvc_atomic_op("InterlockedExchange", ordering, true);
+                    emit_msvc_atomic_op("InterlockedExchange", ordering);
                     emit_param(e.args.at(0)); m_of << ", ";
                     emit_param(e.args.at(1)); m_of << ")";
                     break;
@@ -5613,184 +5721,6 @@ namespace {
             case ::HIR::CoreType::Str:
                 MIR_BUG(*m_mir_res, "Unsized tag?!");
             }
-        }
-
-        void assign_from_literal(::std::function<void()> emit_dst, const ::HIR::TypeRef& ty, const ::HIR::Literal& lit)
-        {
-            TRACE_FUNCTION_F("ty=" << ty << ", lit=" << lit);
-            Span    sp;
-            ::HIR::TypeRef  tmp;
-            auto monomorph_with = [&](const ::HIR::PathParams& pp, const ::HIR::TypeRef& ty)->const ::HIR::TypeRef& {
-                if( monomorphise_type_needed(ty) ) {
-                    tmp = monomorphise_type_with(sp, ty, monomorphise_type_get_cb(sp, nullptr, &pp, nullptr), false);
-                    m_resolve.expand_associated_types(sp, tmp);
-                    return tmp;
-                }
-                else {
-                    return ty;
-                }
-                };
-            auto get_inner_type = [&](unsigned int var, unsigned int idx)->const ::HIR::TypeRef& {
-                TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Array, te,
-                    return *te.inner;
-                )
-                else TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Path, te,
-                    const auto& pp = te.path.m_data.as_Generic().m_params;
-                    TU_MATCHA((te.binding), (pbe),
-                    (Unbound, MIR_BUG(*m_mir_res, "Unbound type path " << ty); ),
-                    (Opaque, MIR_BUG(*m_mir_res, "Opaque type path " << ty); ),
-                    (ExternType,
-                        MIR_BUG(*m_mir_res, "Extern type literal");
-                        ),
-                    (Struct,
-                        TU_MATCHA( (pbe->m_data), (se),
-                        (Unit,
-                            MIR_BUG(*m_mir_res, "Unit struct " << ty);
-                            ),
-                        (Tuple,
-                            return monomorph_with(pp, se.at(idx).ent);
-                            ),
-                        (Named,
-                            return monomorph_with(pp, se.at(idx).second.ent);
-                            )
-                        )
-                        ),
-                    (Union,
-                        MIR_TODO(*m_mir_res, "Union literals");
-                        ),
-                    (Enum,
-                        MIR_ASSERT(*m_mir_res, pbe->m_data.is_Data(), "");
-                        const auto& evar = pbe->m_data.as_Data().at(var);
-                        return monomorph_with(pp, evar.type);
-                        )
-                    )
-                    throw "";
-                )
-                else TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Tuple, te,
-                    return te.at(idx);
-                )
-                else {
-                    MIR_TODO(*m_mir_res, "Unknown type in list literal - " << ty);
-                }
-                };
-            TU_MATCHA( (lit), (e),
-            (Invalid,
-                m_of << "/* INVALID */";
-                ),
-            (Defer,
-                MIR_BUG(*m_mir_res, "Defer literal encountered");
-                ),
-            (List,
-                if( ty.m_data.is_Array() )
-                {
-                    for(unsigned int i = 0; i < e.size(); i ++) {
-                        if(i != 0)  m_of << ";\n\t";
-                        assign_from_literal([&](){ emit_dst(); m_of << ".DATA[" << i << "]"; }, *ty.m_data.as_Array().inner, e[i]);
-                    }
-                }
-                else
-                {
-                    bool emitted_field = false;
-                    for(unsigned int i = 0; i < e.size(); i ++) {
-                        const auto& ity = get_inner_type(0, i);
-                        // Don't emit ZSTs if they're being omitted
-                        if( this->type_is_bad_zst(ity) )
-                            continue ;
-                        if(emitted_field)  m_of << ";\n\t";
-                        emitted_field = true;
-                        assign_from_literal([&](){ emit_dst(); m_of << "._" << i; }, get_inner_type(0, i), e[i]);
-                    }
-                    //if( !emitted_field )
-                    //{
-                    //}
-                }
-                ),
-            (Variant,
-                MIR_ASSERT(*m_mir_res, ty.m_data.is_Path(), "");
-                MIR_ASSERT(*m_mir_res, ty.m_data.as_Path().binding.is_Enum(), "");
-                const auto* repr = Target_GetTypeRepr(sp, m_resolve, ty);
-                MIR_ASSERT(*m_mir_res, repr, "");
-                switch(repr->variants.tag())
-                {
-                case TypeRepr::VariantMode::TAGDEAD:    throw "";
-                TU_ARM(repr->variants, None, ve)
-                    BUG(sp, "");
-                TU_ARM(repr->variants, NonZero, ve) {
-                    if( e.idx == ve.zero_variant ) {
-                        emit_dst(); emit_enum_path(repr, ve.field); m_of << " = 0";
-                    }
-                    else {
-                        assign_from_literal([&](){ emit_dst(); }, get_inner_type(e.idx, 0), *e.val);
-                    }
-                    } break;
-                TU_ARM(repr->variants, Values, ve) {
-                    emit_dst(); emit_enum_path(repr, ve.field); m_of << " = ";
-
-                    emit_enum_variant_val(repr, e.idx);
-                    if( TU_TEST1((*e.val), List, .empty() == false) )
-                    {
-                        m_of << ";\n\t";
-                        assign_from_literal([&](){ emit_dst(); m_of << ".DATA.var_" << e.idx; }, get_inner_type(e.idx, 0), *e.val);
-                    }
-                    } break;
-                }
-                ),
-            (Integer,
-                emit_dst(); m_of << " = ";
-                emit_literal(ty, lit, {});
-                ),
-            (Float,
-                emit_dst(); m_of << " = ";
-                emit_literal(ty, lit, {});
-                ),
-            (BorrowPath,
-                if( ty.m_data.is_Function() )
-                {
-                    emit_dst(); m_of << " = " << Trans_Mangle(e);
-                }
-                else if( ty.m_data.is_Borrow() )
-                {
-                    const auto& ity = *ty.m_data.as_Borrow().inner;
-                    switch( metadata_type(ity) )
-                    {
-                    case MetadataType::Unknown:
-                        MIR_BUG(*m_mir_res, ity << " - Unknown meta");
-                    case MetadataType::None:
-                    case MetadataType::Zero:
-                        emit_dst(); m_of << " = &" << Trans_Mangle(e);
-                        break;
-                    case MetadataType::Slice:
-                        emit_dst(); m_of << ".PTR = &" << Trans_Mangle(e) << ";\n\t";
-                        // HACK: Since getting the size is hard, use two sizeofs
-                        emit_dst(); m_of << ".META = sizeof(" << Trans_Mangle(e) << ") / ";
-                        if( ity.m_data.is_Slice() ) {
-                            m_of << "sizeof("; emit_ctype(*ity.m_data.as_Slice().inner); m_of << ")";
-                        }
-                        else {
-                            m_of << "/*TODO*/";
-                        }
-                        break;
-                    case MetadataType::TraitObject:
-                        emit_dst(); m_of << ".PTR = &" << Trans_Mangle(e) << ";\n\t";
-                        emit_dst(); m_of << ".META = /* TODO: Const VTable */";
-                        break;
-                    }
-                }
-                else
-                {
-                    emit_dst(); m_of << " = &" << Trans_Mangle(e);
-                }
-                ),
-            (BorrowData,
-                MIR_TODO(*m_mir_res, "Handle BorrowData (assign_from_literal) - " << *e);
-                ),
-            (String,
-                emit_dst(); m_of << ".PTR = ";
-                this->print_escaped_string(e);
-                m_of << ";\n\t";
-                emit_dst(); m_of << ".META = " << e.size();
-                )
-            )
         }
 
         void emit_lvalue(const ::MIR::LValue::CRef& val)
@@ -6026,11 +5956,7 @@ namespace {
                 // TODO: This should have been eliminated? ("MIR Cleanup" should have removed all inline Const references)
                 ::HIR::TypeRef  ty;
                 const auto& lit = get_literal_for_const(*c.p, ty);
-                if(lit.is_Integer() || lit.is_Float())
-                {
-                    emit_literal(ty, lit, {});
-                }
-                else if( lit.is_String())
+                if( lit.is_String())
                 {
                     m_of << "make_sliceptr(";
                     this->print_escaped_string( lit.as_String() );
@@ -6038,11 +5964,9 @@ namespace {
                 }
                 else
                 {
-                    // NOTE: GCC hack - statement expressions
-                    MIR_ASSERT(*m_mir_res, m_compiler == Compiler::Gcc, "TODO: Support inline constants without using GCC statement expressions - " << ty << " { " << lit << " }");
-                    m_of << "({"; emit_ctype(ty, FMT_CB(ss, ss<<"v";)); m_of << "; ";
-                    assign_from_literal([&](){ m_of << "v"; }, ty, lit);
-                    m_of << "; v;})";
+                    m_of << "(("; emit_ctype(ty); m_of << ")";
+                    emit_literal(ty, lit, {});
+                    m_of << ")";
                 }
                 }
             TU_ARMA(ItemAddr, c) {
