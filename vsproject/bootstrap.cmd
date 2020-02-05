@@ -2,6 +2,7 @@
 @call build_std.cmd
 @if %errorlevel% neq 0 exit /b %errorlevel%
 
+@echo on
 set RUSTC_TARGET=%CFG_COMPILER_HOST_TRIPLE%
 set RUST_SRC=%~dp0..\rustc-%RUSTC_VERSION%-src\src\
 set PREFIX=%OUTDIR%prefix
@@ -18,7 +19,7 @@ mkdir %CARGO_HOME%
 mkdir %BINDIR_S%
 mkdir %LIBDIR_S%
 
-@IF "%LLVM_CONFIG%"=="" echo LLVM_CONFIG not defined && exit /b 1
+@IF "%LLVM_CONFIG%"=="" echo ERROR : Environment variable LLVM_CONFIG must be defined && exit /b 1
 
 @REM Copy bootstrapping binaries
 copy %OUTDIR%rustc-build\rustc_binary.exe %BINDIR_S%rustc.exe
