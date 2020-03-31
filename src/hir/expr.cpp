@@ -158,6 +158,7 @@ DEF_VISIT(ExprNode_PathValue, node,
     visit_path(::HIR::Visitor::PathContext::VALUE, node.m_path);
 )
 DEF_VISIT(ExprNode_Variable, , )
+DEF_VISIT(ExprNode_ConstParam, , )
 DEF_VISIT(ExprNode_StructLiteral, node,
     visit_type(node.m_type);
     if( node.m_base_value )
@@ -267,7 +268,7 @@ void ::HIR::ExprVisitorDef::visit_pattern(const Span& sp, ::HIR::Pattern& pat)
 }
 void ::HIR::ExprVisitorDef::visit_type(::HIR::TypeRef& ty)
 {
-    TU_MATCH(::HIR::TypeRef::Data, (ty.m_data), (e),
+    TU_MATCH(::HIR::TypeData, (ty.m_data), (e),
     (Infer,
         ),
     (Diverge,

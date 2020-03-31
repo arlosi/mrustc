@@ -318,7 +318,7 @@ void ::HIR::Visitor::visit_params(::HIR::GenericParams& params)
 }
 void ::HIR::Visitor::visit_type(::HIR::TypeRef& ty)
 {
-    TU_MATCH(::HIR::TypeRef::Data, (ty.m_data), (e),
+    TU_MATCH(::HIR::TypeData, (ty.m_data), (e),
     (Infer,
         ),
     (Diverge,
@@ -348,8 +348,8 @@ void ::HIR::Visitor::visit_type(::HIR::TypeRef& ty)
         ),
     (Array,
         this->visit_type( *e.inner );
-        if( e.size )
-            this->visit_expr( *e.size );
+        if( auto* se = e.size.opt_Unevaluated() )
+            this->visit_expr( **se );
         ),
     (Slice,
         this->visit_type( *e.inner );

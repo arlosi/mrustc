@@ -49,7 +49,7 @@ public:
         {
             if( attr.items()[i].name() == "attributes") {
                 for(const auto& si : attr.items()[i].items()) {
-                    attributes.push_back( si.name().c_str() );
+                    attributes.push_back( si.name().as_trivial().c_str() );
                 }
             }
         }
@@ -452,11 +452,18 @@ namespace {
                         this->visit_type(t);
                         m_pmi.send_symbol(",");
                     }
-                    for(const auto& a : e.args().m_assoc)
+                    for(const auto& a : e.args().m_assoc_equal)
                     {
                         m_pmi.send_ident(a.first.c_str());
                         m_pmi.send_symbol("=");
                         this->visit_type(a.second);
+                        m_pmi.send_symbol(",");
+                    }
+                    for(const auto& a : e.args().m_assoc_bound)
+                    {
+                        m_pmi.send_ident(a.first.c_str());
+                        m_pmi.send_symbol(":");
+                        this->visit_path(a.second);
                         m_pmi.send_symbol(",");
                     }
                     m_pmi.send_symbol(">");
@@ -465,28 +472,38 @@ namespace {
         }
         void visit_params(const AST::GenericParams& params)
         {
-            if( params.ty_params().size() > 0 || params.lft_params().size() > 0 )
+            if( !params.m_params.empty() )
             {
                 bool is_first = true;
                 m_pmi.send_symbol("<");
-                // Lifetimes
-                for( const auto& p : params.lft_params() )
+                for( const auto& p : params.m_params )
                 {
                     if( !is_first )
                         m_pmi.send_symbol(",");
-                    m_pmi.send_lifetime(p.name().name.c_str());
-                    is_first = false;
-                }
-                // Types
-                for( const auto& p : params.ty_params() )
-                {
-                    if( !is_first )
-                        m_pmi.send_symbol(",");
-                    m_pmi.send_ident(p.name().c_str());
-                    if( !p.get_default().is_wildcard() )
-                    {
-                        m_pmi.send_symbol("=");
-                        this->visit_type(p.get_default());
+                    TU_MATCH_HDRA( (p), {)
+                    TU_ARMA(None, p) {
+                        // Uh... oops?
+                        BUG(Span(), "Enountered GenericParam::None");
+                        }
+                    TU_ARMA(Lifetime, p) {
+                        m_pmi.send_lifetime(p.name().name.c_str());
+                        }
+                    TU_ARMA(Type, p) {
+                        this->visit_attrs(p.attrs());
+                        m_pmi.send_ident(p.name().c_str());
+                        if( !p.get_default().is_wildcard() )
+                        {
+                            m_pmi.send_symbol("=");
+                            this->visit_type(p.get_default());
+                        }
+                        }
+                    TU_ARMA(Value, p) {
+                        this->visit_attrs(p.attrs());
+                        m_pmi.send_ident("const");
+                        m_pmi.send_ident(p.name().name.c_str());
+                        m_pmi.send_symbol(":");
+                        visit_type(p.type());
+                        }
                     }
                     is_first = false;
                 }
@@ -495,7 +512,7 @@ namespace {
         }
         void visit_bounds(const AST::GenericParams& params)
         {
-            if( params.bounds().size() > 0 )
+            if( !params.m_bounds.empty() )
             {
                 // TODO:
                 TODO(Span(), "visit_bounds");
@@ -615,7 +632,7 @@ namespace {
         {
             for(const auto& a : attrs)
             {
-                if( m_pmi.attr_is_used(a.name()) )
+                if( a.name().is_trivial() && m_pmi.attr_is_used(a.name().as_trivial()) )
                 {
                     DEBUG("Send " << a);
                     m_pmi.send_symbol("#");
@@ -629,7 +646,7 @@ namespace {
         {
             for(const auto& a : attrs.m_items)
             {
-                if( m_pmi.attr_is_used(a.name()) )
+                if( a.name().is_trivial() && m_pmi.attr_is_used(a.name().as_trivial()) )
                 {
                     DEBUG("Send " << a);
                     m_pmi.send_symbol("#");
@@ -641,7 +658,13 @@ namespace {
         }
         void visit_meta_item(const ::AST::Attribute& i)
         {
-            m_pmi.send_ident(i.name().c_str());
+            for(const auto& e : i.name().elems)
+            {
+                if( &e != &i.name().elems.front() )
+                    m_pmi.send_symbol("::");
+                m_pmi.send_ident(e.c_str());
+            }
+
             if( i.has_noarg() ) {
             }
             else if( i.has_string() ) {
@@ -810,6 +833,7 @@ namespace {
 }
 
 ProcMacroInv::ProcMacroInv(const Span& sp, const char* executable, const ::HIR::ProcMacro& proc_macro_desc):
+    TokenStream(ParseState(AST::Edition::Rust2015)), // TODO: Pull edition from the macro
     m_parent_span(sp),
     m_proc_macro_desc(proc_macro_desc)
 {
@@ -912,6 +936,7 @@ ProcMacroInv::ProcMacroInv(const Span& sp, const char* executable, const ::HIR::
 #endif
 }
 ProcMacroInv::ProcMacroInv(ProcMacroInv&& x):
+    TokenStream(x.parse_state()),
     m_parent_span(x.m_parent_span),
     m_proc_macro_desc(x.m_proc_macro_desc),
 #ifdef _WIN32

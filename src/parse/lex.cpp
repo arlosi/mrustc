@@ -18,7 +18,8 @@
 //#define TRACE_CHARS
 //#define TRACE_RAW_TOKENS
 
-Lexer::Lexer(const ::std::string& filename):
+Lexer::Lexer(const ::std::string& filename, ParseState ps):
+    TokenStream(ps),
     m_path(filename.c_str()),
     m_line(1),
     m_line_ofs(0),
@@ -752,12 +753,22 @@ Token Lexer::getTokenInt_RawString(bool is_byte)
         hashes ++;
         ch = this->getc();
     }
-    if( hashes == 0 && ch != '"' ) {
-        this->ungetc(); // Unget the not '"'
-        if( is_byte )
-            return this->getTokenInt_Identifier('b', 'r');
-        else
-            return this->getTokenInt_Identifier('r');
+    if( ch != '"' ) {
+        // 'b' or 'br' identifier
+        if( hashes == 0 ) {
+            this->ungetc(); // Unget the not '"'
+            if( is_byte )
+                return this->getTokenInt_Identifier('b', 'r');
+            else
+                return this->getTokenInt_Identifier('r');
+        }
+        // Raw identifier
+        else if( hashes == 1 ) {
+            return this->getTokenInt_Identifier(ch);
+        }
+        else {
+            throw ParseError::Generic(*this, "Expected '\"' after hashes following `r`");
+        }
     }
     auto terminator = ch;
     ::std::string   val;

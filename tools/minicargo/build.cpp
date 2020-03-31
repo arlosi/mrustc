@@ -68,9 +68,6 @@ class Builder
     ::helpers::path m_compiler_path;
     size_t m_total_targets;
     mutable size_t m_targets_built;
-#ifndef _WIN32
-    mutable ::std::mutex    chdir_mutex;
-#endif
 
 public:
     Builder(const BuildOptions& opts, size_t total_targets);
@@ -82,7 +79,6 @@ public:
 private:
     ::helpers::path get_crate_path(const PackageManifest& manifest, const PackageTarget& target, bool is_for_host, const char** crate_type, ::std::string* out_crate_suffix) const;
     bool spawn_process_mrustc(const StringList& args, StringListKV env, const ::helpers::path& logfile) const;
-    bool spawn_process(const char* exe_name, const StringList& args, const StringListKV& env, const ::helpers::path& logfile, const ::helpers::path& working_directory={}) const;
 
     ::helpers::path build_and_run_script(const PackageManifest& manifest, bool is_for_host) const;
 
@@ -139,6 +135,8 @@ public:
         return os;
     }
 };
+
+static ::std::mutex s_cout_mutex;
 
 BuildList::BuildList(const PackageManifest& manifest, const BuildOptions& opts):
     m_root_manifest(manifest)
@@ -514,6 +512,7 @@ bool BuildList::build(BuildOptions opts, unsigned num_jobs)
     }
     else
     {
+        // NOTE: Don't bother locking, not multi-threaded
         ::std::cout << "DRY RUN BUILD" << ::std::endl;
         unsigned pass = 0;
         while( !state.build_queue.empty() )
@@ -560,6 +559,7 @@ bool BuildList::build(BuildOptions opts, unsigned num_jobs)
         return this->m_root_manifest.foreach_ty(PackageTarget::Type::Test, [&](const auto& test_target) {
             return builder.build_target(this->m_root_manifest, test_target, /*is_for_host=*/true, ~0u);
             });
+    //case BuildOptions::Mode::Examples:
     }
     throw "unreachable";
 }
@@ -570,60 +570,7 @@ Builder::Builder(const BuildOptions& opts, size_t total_targets):
     m_total_targets(total_targets),
     m_targets_built(0)
 {
-    if( const char* override_path = getenv("MRUSTC_PATH") ) {
-        m_compiler_path = override_path;
-        return ;
-    }
-    // TODO: Clean this stuff up
-#ifdef _WIN32
-    char buf[1024];
-    size_t s = GetModuleFileName(NULL, buf, sizeof(buf)-1);
-    buf[s] = 0;
-
-    ::helpers::path minicargo_path { buf };
-    minicargo_path.pop_component();
-# ifdef __MINGW32__
-    m_compiler_path = (minicargo_path / "..\\..\\bin\\mrustc.exe").normalise();
-# else
-    // MSVC, minicargo and mrustc are in the same dir
-    m_compiler_path = minicargo_path / "mrustc.exe";
-# endif
-#else
-    char buf[1024];
-# ifdef __linux__
-    ssize_t s = readlink("/proc/self/exe", buf, sizeof(buf)-1);
-    if(s >= 0)
-    {
-        buf[s] = 0;
-    }
-    else
-# elif defined(__APPLE__)
-    uint32_t  s = sizeof(buf);
-    if( _NSGetExecutablePath(buf, &s) == 0 )
-    {
-        // Buffer populated
-    }
-    else
-        // TODO: Buffer too small
-# elif defined(__FreeBSD__) || defined(__DragonFly__) || (defined(__NetBSD__) && defined(KERN_PROC_PATHNAME)) // NetBSD 8.0+
-    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
-    size_t s = sizeof(buf);
-    if ( sysctl(mib, 4, buf, &s, NULL, 0) == 0 )
-    {
-        // Buffer populated
-    }
-    else
-# else
-#   warning "Can't runtime determine path to minicargo"
-# endif
-    {
-        strcpy(buf, "tools/bin/minicargo");
-    }
-
-    ::helpers::path minicargo_path { buf };
-    minicargo_path.pop_component();
-    m_compiler_path = (minicargo_path / "../../bin/mrustc").normalise();
-#endif
+    m_compiler_path = get_mrustc_path();
 }
 
 ::helpers::path Builder::get_crate_path(const PackageManifest& manifest, const PackageTarget& target, bool is_for_host, const char** crate_type, ::std::string* out_crate_suffix) const
@@ -854,6 +801,7 @@ bool Builder::build_target(const PackageManifest& manifest, const PackageTarget&
     }
 
     {
+        ::std::lock_guard<::std::mutex> lh { s_cout_mutex };
         // TODO: Determine what number and total targets there are
         if( index != ~0u ) {
             //::std::cout << "(" << index << "/" << m_total_targets << ") ";
@@ -927,6 +875,19 @@ bool Builder::build_target(const PackageManifest& manifest, const PackageTarget&
         auto path = this->get_crate_path(m, m.get_library(), is_for_host, nullptr, nullptr);
         args.push_back("--extern");
         args.push_back(::format(m.get_library().m_name, "=", path));
+    }
+    switch(target.m_edition)
+    {
+    case Edition::Unspec:
+        break;
+    case Edition::Rust2015:
+        args.push_back("--edition");
+        args.push_back("2015");
+        break;
+    case Edition::Rust2018:
+        args.push_back("--edition");
+        args.push_back("2018");
+        break;
     }
     if( target.m_type == PackageTarget::Type::Test )
     {
@@ -1115,7 +1076,7 @@ bool Builder::build_target(const PackageManifest& manifest, const PackageTarget&
         }
 
         //auto _ = ScopedChdir { manifest.directory() };
-        if( !this->spawn_process(script_exe_abs.str().c_str(), {}, env, out_file, /*working_directory=*/manifest.directory()) )
+        if( !spawn_process(script_exe_abs.str().c_str(), {}, env, out_file, /*working_directory=*/manifest.directory()) )
         {
             auto failed_filename = out_file+"_failed.txt";
             remove(failed_filename.str().c_str());
@@ -1180,17 +1141,83 @@ bool Builder::spawn_process_mrustc(const StringList& args, StringListKV env, con
     //env.push_back("MRUSTC_DEBUG", "");
     return spawn_process(m_compiler_path.str().c_str(), args, env, logfile);
 }
-bool Builder::spawn_process(const char* exe_name, const StringList& args, const StringListKV& env, const ::helpers::path& logfile, const ::helpers::path& working_directory/*={}*/) const
+
+const helpers::path& get_mrustc_path()
+{
+    static helpers::path    s_compiler_path;
+    if( !s_compiler_path.is_valid() )
+    {
+        if( const char* override_path = getenv("MRUSTC_PATH") ) {
+            s_compiler_path = override_path;
+            return s_compiler_path;
+        }
+        // TODO: Clean this stuff up
+#ifdef _WIN32
+        char buf[1024];
+        size_t s = GetModuleFileName(NULL, buf, sizeof(buf)-1);
+        buf[s] = 0;
+
+        ::helpers::path minicargo_path { buf };
+        minicargo_path.pop_component();
+# ifdef __MINGW32__
+        s_compiler_path = (minicargo_path / "..\\..\\bin\\mrustc.exe").normalise();
+# else
+        // MSVC, minicargo and mrustc are in the same dir
+        s_compiler_path = minicargo_path / "mrustc.exe";
+# endif
+#else
+        char buf[1024];
+# ifdef __linux__
+        ssize_t s = readlink("/proc/self/exe", buf, sizeof(buf)-1);
+        if(s >= 0)
+        {
+            buf[s] = 0;
+        }
+        else
+# elif defined(__APPLE__)
+        uint32_t  s = sizeof(buf);
+        if( _NSGetExecutablePath(buf, &s) == 0 )
+        {
+            // Buffer populated
+        }
+        else
+            // TODO: Buffer too small
+# elif defined(__FreeBSD__) || defined(__DragonFly__) || (defined(__NetBSD__) && defined(KERN_PROC_PATHNAME)) // NetBSD 8.0+
+        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+        size_t s = sizeof(buf);
+        if ( sysctl(mib, 4, buf, &s, NULL, 0) == 0 )
+        {
+            // Buffer populated
+        }
+        else
+# else
+        #   warning "Can't runtime determine path to minicargo"
+# endif
+        {
+            // On any error, just hard-code as if running from root dir
+            strcpy(buf, "tools/bin/minicargo");
+        }
+
+        ::helpers::path minicargo_path { buf };
+        minicargo_path.pop_component();
+        s_compiler_path = (minicargo_path / "../../bin/mrustc").normalise();
+#endif
+    }
+    return s_compiler_path;
+}
+
+bool spawn_process(const char* exe_name, const StringList& args, const StringListKV& env, const ::helpers::path& logfile, const ::helpers::path& working_directory/*={}*/)
 {
 #ifdef _WIN32
     ::std::stringstream cmdline;
     cmdline << exe_name;
     for (const auto& arg : args.get_vec())
-        // TODO: Escaping
+        // TODO: Escaping rules (quote if spaces, `^` before interior quotes or `^`)
         cmdline << " " << arg;
     auto cmdline_str = cmdline.str();
     if(true)
     {
+        ::std::lock_guard<::std::mutex> lh { s_cout_mutex };
         ::std::cout << "> " << cmdline_str << ::std::endl;
     }
     else
@@ -1216,7 +1243,13 @@ bool Builder::spawn_process(const char* exe_name, const StringList& args, const 
     }
 #endif
 
-    CreateDirectory(static_cast<::std::string>(logfile.parent()).c_str(), NULL);
+    {
+        auto logfile_dir = logfile.parent();
+        if(logfile_dir.is_valid())
+        {
+            CreateDirectory(logfile_dir.str().c_str(), NULL);
+        }
+    }
 
     STARTUPINFO si = { 0 };
     si.cb = sizeof(si);
@@ -1263,6 +1296,7 @@ bool Builder::spawn_process(const char* exe_name, const StringList& args, const 
 
     if(true)
     {
+        ::std::lock_guard<::std::mutex> lh { s_cout_mutex };
         ::std::cout << ">";
         for(const auto& p : argv)
             ::std::cout  << " " << p;
@@ -1297,9 +1331,9 @@ bool Builder::spawn_process(const char* exe_name, const StringList& args, const 
     //    });
     envp.push_back(nullptr);
 
-    // TODO: Acquire a lock
     {
-        ::std::lock_guard<::std::mutex> lh { this->chdir_mutex };
+        static ::std::mutex    s_chdir_mutex;
+        ::std::lock_guard<::std::mutex> lh { s_chdir_mutex };
         auto fd_cwd = open(".", O_DIRECTORY);
         if( working_directory != ::helpers::path() ) {
             chdir(working_directory.str().c_str());

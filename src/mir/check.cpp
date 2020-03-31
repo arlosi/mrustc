@@ -41,7 +41,7 @@ namespace {
                     vtable_params.m_types[idx] = ty_b.second.clone();
                 }
                 // TODO: This should be a pointer
-                return ::HIR::TypeRef( ::HIR::GenericPath(vtable_ty_spath, mv$(vtable_params)), &vtable_ref );
+                return ::HIR::TypeRef::new_path( ::HIR::GenericPath(vtable_ty_spath, mv$(vtable_params)), &vtable_ref );
             }
         }
         else if( unsized_ty.m_data.is_Slice() )
@@ -262,7 +262,8 @@ void MIR_Validate_ValState(::MIR::TypeResolve& state, const ::MIR::Function& fcn
             bool rv = false;
             if( a != b )
             {
-                if( a == State::Either || b == State::Either ) {
+                // NOTE: This is an attempted optimisation to avoid re-running a block when it's not a new state.
+                if( a == State::Either /*|| b == State::Either*/ ) {
                 }
                 else {
                     rv = true;
@@ -324,6 +325,7 @@ void MIR_Validate_ValState(::MIR::TypeResolve& state, const ::MIR::Function& fcn
         // 1. Apply current state to `block_start_states` (merging if needed)
         // - If no change happened, skip.
         if( ! block_start_states.at(block).merge(block, val_state) ) {
+            DEBUG("BB" << block << " via [" << path << "] nochange " << FMT_CB(ss,val_state.fmt(ss);));
             continue ;
         }
         ASSERT_BUG(Span(), val_state.locals.size() == fcn.locals.size(), "");
@@ -703,6 +705,9 @@ void MIR_Validate(const StaticTraitResolve& resolve, const ::HIR::ItemPath& path
                             check_types( dst_ty, ::HIR::TypeRef::new_borrow(::HIR::BorrowType::Shared, ::HIR::CoreType::Str) );
                             ),
                         (Const,
+                            // TODO: Check result type against type of const
+                            ),
+                        (Generic,
                             // TODO: Check result type against type of const
                             ),
                         (ItemAddr,

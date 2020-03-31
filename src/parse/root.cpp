@@ -109,8 +109,6 @@ bool Parse_MacroInvocation_Opt(TokenStream& lex,  AST::MacroInvocation& out_inv)
                     break;
                 GET_TOK(tok, lex);
                 GET_CHECK_TOK(tok, lex, TOK_IDENT);
-            case TOK_RWORD_IN:
-                GET_CHECK_TOK(tok, lex, TOK_IDENT);
                 path.nodes().push_back( AST::PathNode(tok.istr()) );
                 while( LOOK_AHEAD(lex) == TOK_DOUBLE_COLON )
                 {
@@ -118,6 +116,14 @@ bool Parse_MacroInvocation_Opt(TokenStream& lex,  AST::MacroInvocation& out_inv)
                     GET_CHECK_TOK(tok, lex, TOK_IDENT);
                     path.nodes().push_back( AST::PathNode(tok.istr()) );
                 }
+                break;
+            case TOK_RWORD_IN:
+                path = Parse_Path(lex, PATH_GENERIC_NONE);
+                //TU_MATCH_HDRA( (path.m_class), {)
+                //TU_ARMA(Super, e) {
+                //    e.count
+                //    }
+                //}
                 break;
             default:
                 throw ParseError::Unexpected(lex, tok);
@@ -244,7 +250,7 @@ AST::GenericParams Parse_GenericParams(TokenStream& lex)
         if( tok.type() == TOK_IDENT )
         {
             auto param_name = tok.istr();
-            ret.add_ty_param( AST::TypeParam( lex.point_span(), ::std::move(attrs), param_name ) );
+            auto param_def = AST::TypeParam( lex.point_span(), ::std::move(attrs), param_name );
 
             auto param_ty = TypeRef(lex.point_span(), param_name);
             if( GET_TOK(tok, lex) == TOK_COLON )
@@ -255,9 +261,10 @@ AST::GenericParams Parse_GenericParams(TokenStream& lex)
 
             if( tok.type() == TOK_EQUAL )
             {
-                ret.ty_params().back().setDefault( Parse_Type(lex) );
+                param_def.setDefault( Parse_Type(lex) );
                 GET_TOK(tok, lex);
             }
+            ret.add_ty_param( mv$(param_def) );
         }
         else if( tok.type() == TOK_LIFETIME )
         {
@@ -271,6 +278,16 @@ AST::GenericParams Parse_GenericParams(TokenStream& lex)
                     ret.add_bound(AST::GenericBound::make_Lifetime({ AST::LifetimeRef(ref), get_LifetimeRef(lex, mv$(tok)) }));
                 } while( GET_TOK(tok, lex) == TOK_PLUS );
             }
+        }
+        else if( tok.type() == TOK_RWORD_CONST )
+        {
+            GET_CHECK_TOK(tok, lex, TOK_IDENT);
+            auto param_name = lex.get_ident(mv$(tok));
+            GET_CHECK_TOK(tok, lex, TOK_COLON);
+            auto ty = Parse_Type(lex);
+
+            ret.add_value_param(lex.point_span(), mv$(attrs), mv$(param_name), mv$(ty));
+            GET_TOK(tok, lex);
         }
         else
         {
@@ -336,11 +353,12 @@ void Parse_WhereClause(TokenStream& lex, AST::GenericParams& params)
     // If any of the following
     // - Expecting a named parameter (i.e. defining a function in root or impl)
     // - Next token is an underscore (only valid as a pattern here)
-    // - Next token is 'mut' (a mutable parameter slot)
+    // - Next token is 'mut' (a mutable parameter slot) or 'ref' (ref pattern)
     // - Next two are <ident> ':' (a trivial named parameter)
     // NOTE: When not expecting a named param, destructuring patterns are not allowed
     if( expect_named
       || LOOK_AHEAD(lex) == TOK_UNDERSCORE
+      || LOOK_AHEAD(lex) == TOK_RWORD_REF
       || LOOK_AHEAD(lex) == TOK_RWORD_MUT
       || (LOOK_AHEAD(lex) == TOK_IDENT && lex.lookahead(1) == TOK_COLON)
       )
@@ -1016,36 +1034,45 @@ AST::Attribute Parse_MetaItem(TokenStream& lex)
     }
 
     auto ps = lex.start_span();
-    GET_TOK(tok, lex);
-
+    
+    AST::AttributeName  name;
+    // NOTE: After 1.19 mode, values can be present with no name
+    if( !TARGETVER_1_19 && lex.lookahead(0) != TOK_IDENT )
+    {
+        // Put a fake equals token in the queue
+        tok = Token(TOK_EQUAL);
+    }
+    else
+    {
+        do {
+            GET_CHECK_TOK(tok, lex, TOK_IDENT);
+            name.elems.push_back(tok.istr());
+        } while(GET_TOK(tok, lex) == TOK_DOUBLE_COLON);
+    }
+    ::AST::AttributeData  attr_data;
     switch(tok.type())
     {
-    case TOK_IDENT:
-        break;
-    case TOK_INTEGER:
-        if( TARGETVER_1_29 )
-            return AST::Attribute(lex.end_span(ps), "", tok.to_str());
-    default:
-        throw ParseError::Unexpected(lex, tok, {TOK_IDENT, TOK_INTEGER});
-    }
-
-    auto name = tok.istr();
-    switch(GET_TOK(tok, lex))
-    {
     case TOK_EQUAL:
+        //auto e = Parse_ExprVal(lex);
+        // TODO: Just store an expression (avoids needing to run expand here)
         switch(GET_TOK(tok, lex))
         {
         case TOK_STRING:
-            return AST::Attribute(lex.end_span(ps), name, tok.str());
+            attr_data = AST::AttributeData::make_String({tok.str()});
+            break;
         case TOK_INTERPOLATED_EXPR: {
             auto n = tok.take_frag_node();
             void Expand_BareExpr(const AST::Crate& , const AST::Module&, ::std::unique_ptr<AST::ExprNode>& n);
-            assert( lex.parse_state().crate );
-            assert( lex.parse_state().module );
+            ASSERT_BUG( lex.point_span(), lex.parse_state().crate, "Crate not set" );
+            ASSERT_BUG( lex.point_span(), lex.parse_state().module, "Module not set" );
             Expand_BareExpr(*lex.parse_state().crate, *lex.parse_state().module, n);
             if( auto* v = dynamic_cast<::AST::ExprNode_String*>(&*n) )
             {
-                return AST::Attribute(lex.end_span(ps), name, mv$(v->m_value));
+                attr_data = AST::AttributeData::make_String({ mv$(v->m_value) });
+            }
+            else if( auto* v = dynamic_cast<::AST::ExprNode_Integer*>(&*n) )
+            {
+                attr_data = AST::AttributeData::make_String({ FMT(v->m_value) });
             }
             else
             {
@@ -1055,15 +1082,29 @@ AST::Attribute Parse_MetaItem(TokenStream& lex)
             break; }
         case TOK_INTEGER:
             if( TARGETVER_1_29 )
-                return AST::Attribute(lex.end_span(ps), name, tok.to_str());
+            {
+                attr_data = AST::AttributeData::make_String({ tok.to_str() });
+                break;
+            }
         case TOK_IDENT:
             if( TARGETVER_1_29 )
-                return AST::Attribute(lex.end_span(ps), name, tok.to_str());
+            {
+                auto s = tok.to_str();
+                while(lex.lookahead(0) == TOK_DOUBLE_COLON)
+                {
+                    GET_CHECK_TOK(tok, lex, TOK_DOUBLE_COLON);
+                    s += "::";
+                    GET_CHECK_TOK(tok, lex, TOK_IDENT);
+                    s += tok.to_str();
+                }
+                attr_data = AST::AttributeData::make_String({ s });
+                break;
+            }
         default:
             // - Force an error.
-            CHECK_TOK(tok, TOK_STRING);
+            throw ParseError::Unexpected(lex, tok, TOK_STRING);
         }
-        throw "";
+        break;
     case TOK_PAREN_OPEN: {
         ::std::vector<AST::Attribute>    items;
         do {
@@ -1074,11 +1115,14 @@ AST::Attribute Parse_MetaItem(TokenStream& lex)
             items.push_back(Parse_MetaItem(lex));
         } while(GET_TOK(tok, lex) == TOK_COMMA);
         CHECK_TOK(tok, TOK_PAREN_CLOSE);
-        return AST::Attribute(lex.end_span(ps), name, mv$(items)); }
+        attr_data = AST::AttributeData::make_List({ mv$(items) });
+        } break;
     default:
         PUTBACK(tok, lex);
-        return AST::Attribute(lex.end_span(ps), name);
+        attr_data = AST::AttributeData::make_None({});
+        break;
     }
+    return AST::Attribute(lex.end_span(ps), name, mv$(attr_data));
 }
 
 ::AST::Item Parse_Impl(TokenStream& lex, AST::AttributeList attrs, bool is_unsafe=false)
@@ -1459,6 +1503,11 @@ void Parse_Use_Inner(TokenStream& lex, ::std::vector<AST::UseItem::Ent>& entries
         GET_CHECK_TOK(tok, lex, TOK_DOUBLE_COLON);
         break;
     default:
+        if(lex.parse_state().edition_after(AST::Edition::Rust2018))
+        {
+            //path = AST::Path(lex.parse_state().module->path());
+            path = AST::Path(AST::Path::TagRelative(), /*hygine=*/{}, {});
+        }
         PUTBACK(tok, lex);
         break;
     }
@@ -2050,7 +2099,7 @@ namespace {
                     submod.m_file_info.path = newpath_file;
                     submod.m_file_info.controls_dir = false;
                     DEBUG("- path = " << submod.m_file_info.path);
-                    Lexer sub_lex(submod.m_file_info.path);
+                    Lexer sub_lex(submod.m_file_info.path, lex.parse_state());
                     Parse_ModRoot(sub_lex, submod, meta_items);
                     GET_CHECK_TOK(tok, sub_lex, TOK_EOF);
                 }
@@ -2091,7 +2140,7 @@ namespace {
                     ERROR(lex.point_span(), E0000, "Can't find file for '" << name << "' in '" << mod_fileinfo.path << "'");
                 }
                 DEBUG("- path = " << submod.m_file_info.path);
-                Lexer sub_lex(submod.m_file_info.path);
+                Lexer sub_lex(submod.m_file_info.path, lex.parse_state());
                 Parse_ModRoot(sub_lex, submod, meta_items);
                 GET_CHECK_TOK(tok, sub_lex, TOK_EOF);
             }
@@ -2113,6 +2162,7 @@ namespace {
 void Parse_Mod_Item(TokenStream& lex, AST::Module& mod, AST::AttributeList meta_items)
 {
     SET_MODULE(lex, mod);
+    lex.parse_state().module = &mod;
     lex.parse_state().parent_attrs = &meta_items;
 
     mod.add_item( Parse_Mod_Item_S(lex, mod.m_file_info, mod.path(), mv$(meta_items)) );
@@ -2154,17 +2204,18 @@ void Parse_ModRoot(TokenStream& lex, AST::Module& mod, AST::AttributeList& mod_a
     Parse_ModRoot_Items(lex, mod);
 }
 
-AST::Crate Parse_Crate(::std::string mainfile)
+AST::Crate Parse_Crate(::std::string mainfile, AST::Edition edition)
 {
     Token   tok;
 
-    Lexer lex(mainfile);
+    Lexer lex(mainfile, ParseState(edition));
 
     size_t p = mainfile.find_last_of('/');
     p = (p == ::std::string::npos ? mainfile.find_last_of('\\') : p);
     ::std::string mainpath = (p != ::std::string::npos ? ::std::string(mainfile.begin(), mainfile.begin()+p+1) : "./");
 
     AST::Crate  crate;
+    crate.m_edition = edition;
 
     //crate.root_module().m_file_info.file_path = mainfile;
     crate.root_module().m_file_info.path = mainpath;

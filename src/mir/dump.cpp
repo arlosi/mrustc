@@ -144,7 +144,7 @@ namespace {
                         ),
                     (String,
                         for(unsigned int j = 0; j < e.targets.size(); j ++)
-                            m_os << "\"" << ve[j] << "\" => bb" << e.targets[j] << ", ";
+                            m_os << "\"" << FmtEscaped(ve[j]) << "\" => bb" << e.targets[j] << ", ";
                         )
                     )
                     m_os << "_ => bb" << e.def_target <<  "}\n";
@@ -179,44 +179,7 @@ namespace {
             os << lval;
         }
         void fmt_val(::std::ostream& os, const ::MIR::Constant& e) {
-            TU_MATCHA( (e), (ce),
-            (Int,
-                os << ce.v << "_" << ce.t;
-                ),
-            (Uint,
-                os << "0x" << ::std::hex << ce.v << ::std::dec << "_" << ce.t;
-                ),
-            (Float,
-                os << ce.v << "_" << ce.t;
-                ),
-            (Bool,
-                os << (ce.v ? "true" : "false");
-                ),
-            (Bytes,
-                os << ::std::hex << "b\"";
-                for(auto b : ce)
-                {
-                    if( b == '\\' )
-                        os << "\\\\";
-                    else if( b == '"' )
-                        os << "\\\"";
-                    else if( ' ' <= b && b < 0x7F )
-                        os << b;
-                    else
-                        os << "\\x" << ::std::setw(2) << ::std::setfill('0') << (int)b;
-                }
-                os << ::std::dec << "\"";
-                ),
-            (StaticString,
-                os << "\"" << ce << "\"";
-                ),
-            (Const,
-                os << *ce.p;
-                ),
-            (ItemAddr,
-                os << "addr " << *ce;
-                )
-            )
+            os << e;
         }
         void fmt_val(::std::ostream& os, const ::MIR::Param& param) {
             TU_MATCHA( (param), (e),

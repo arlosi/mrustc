@@ -389,8 +389,9 @@ void MirBuilder::push_stmt_set_dropflag_default(const Span& sp, unsigned int idx
 void MirBuilder::push_stmt(const Span& sp, ::MIR::Statement stmt)
 {
     ASSERT_BUG(sp, m_block_active, "Pushing statement with no active block");
-    DEBUG("BB" << m_current_block << " += " << stmt);
-    m_output.blocks.at(m_current_block).statements.push_back( mv$(stmt) );
+    auto& blk = m_output.blocks.at(m_current_block);
+    DEBUG("BB" << m_current_block << "/" << blk.statements.size() << " = " << stmt);
+    blk.statements.push_back( mv$(stmt) );
 }
 
 void MirBuilder::mark_value_assigned(const Span& sp, const ::MIR::LValue& dst)
@@ -1410,7 +1411,7 @@ void MirBuilder::end_split_arm(const Span& sp, const ScopeHandle& handle, bool r
     auto& sd_split = sd.data.as_Split();
     ASSERT_BUG(sp, !sd_split.arms.empty(), "Split arm list is empty (impossible)");
 
-    TRACE_FUNCTION_F("end split scope " << handle.idx << " arm " << (sd_split.arms.size()-1));
+    TRACE_FUNCTION_F("end split scope " << handle.idx << " arm " << (sd_split.arms.size()-1) << (reachable ? " reachable" : "") << (early ? " early" : ""));
     if( reachable )
         ASSERT_BUG(sp, m_block_active, "Block must be active when ending a reachable split arm");
 
@@ -1648,17 +1649,16 @@ void MirBuilder::with_val_type(const Span& sp, const ::MIR::LValue& val, ::std::
             };
         TU_MATCH_HDRA( (w), {)
         TU_ARMA(Field, field_index) {
-            TU_MATCH_DEF( ::HIR::TypeRef::Data, (ty.m_data), (te),
-            (
+            TU_MATCH_HDRA( (ty.m_data), {)
+            default:
                 BUG(sp, "Field access on unexpected type - " << ty);
-                ),
-            (Array,
+            TU_ARMA(Array, te) {
                 ty_p = &*te.inner;
-                ),
-            (Slice,
+                }
+            TU_ARMA(Slice, te) {
                 ty_p = &*te.inner;
-                ),
-            (Path,
+                }
+            TU_ARMA(Path, te) {
                 if( const auto* tep = te.binding.opt_Struct() )
                 {
                     const auto& str = **tep;
@@ -1688,19 +1688,18 @@ void MirBuilder::with_val_type(const Span& sp, const ::MIR::LValue& val, ::std::
                 {
                     BUG(sp, "Field acess on unexpected type - " << ty);
                 }
-                ),
-            (Tuple,
+                }
+            TU_ARMA(Tuple, te) {
                 ASSERT_BUG(sp, field_index < te.size(), "Field index out of range in tuple " << field_index << " >= " << te.size());
                 ty_p = &te[field_index];
-                )
-            )
+                }
+            }
             }
         TU_ARMA(Deref, _e) {
-            TU_MATCH_DEF( ::HIR::TypeRef::Data, (ty.m_data), (te),
-            (
+            TU_MATCH_HDRA( (ty.m_data), { )
+            default:
                 BUG(sp, "Deref on unexpected type - " << ty);
-                ),
-            (Path,
+            TU_ARMA(Path, te) {
                 if( const auto* inner_ptr = this->is_type_owned_box(ty) )
                 {
                     ty_p = &*inner_ptr;
@@ -1708,17 +1707,17 @@ void MirBuilder::with_val_type(const Span& sp, const ::MIR::LValue& val, ::std::
                 else {
                     BUG(sp, "Deref on unexpected type - " << ty);
                 }
-                ),
-            (Pointer,
+                }
+            TU_ARMA(Pointer, te) {
                 ty_p = &*te.inner;
-                ),
-            (Borrow,
+                }
+            TU_ARMA(Borrow, te) {
                 ty_p = &*te.inner;
-                )
-            )
+                }
+            }
             }
         TU_ARMA(Index, _index_val) {
-            TU_MATCH_DEF( ::HIR::TypeRef::Data, (ty.m_data), (te),
+            TU_MATCH_DEF( ::HIR::TypeData, (ty.m_data), (te),
             (
                 BUG(sp, "Index on unexpected type - " << ty);
                 ),
@@ -1731,11 +1730,10 @@ void MirBuilder::with_val_type(const Span& sp, const ::MIR::LValue& val, ::std::
             )
             }
         TU_ARMA(Downcast, variant_index) {
-            TU_MATCH_DEF( ::HIR::TypeRef::Data, (ty.m_data), (te),
-            (
+            TU_MATCH_HDRA( (ty.m_data), { )
+            default:
                 BUG(sp, "Downcast on unexpected type - " << ty);
-                ),
-            (Path,
+            TU_ARMA(Path, te) {
                 if( const auto* pbe = te.binding.opt_Enum() )
                 {
                     const auto& enm = **pbe;
@@ -1759,8 +1757,8 @@ void MirBuilder::with_val_type(const Span& sp, const ::MIR::LValue& val, ::std::
                 {
                     BUG(sp, "Downcast on non-Enum/Union - " << ty << " for " << val);
                 }
-                )
-            )
+                }
+            }
             }
         }
         assert(ty_p);
@@ -2018,7 +2016,8 @@ VarState* MirBuilder::get_val_state_mut_p(const Span& sp, const ::MIR::LValue& l
                         n_flds = e->size();
                     }
                     else if(const auto* e = ty.m_data.opt_Array()) {
-                        n_flds = e->size_val;
+                        ASSERT_BUG(sp, e->size.is_Known(), "Array size not known");
+                        n_flds = e->size.as_Known();
                     }
                     else {
                         TODO(sp, "Determine field count for " << ty);

@@ -13,6 +13,7 @@
 #include <string_view.hpp>
 #include "parse/lex.hpp"
 #include "parse/parseerror.hpp"
+#include "parse/common.hpp"    // For edition checks
 #include "ast/ast.hpp"
 #include "ast/crate.hpp"
 #include <cstring>
@@ -57,6 +58,7 @@ struct ProgramParams
 
     ::std::string   emit_depfile;
 
+    AST::Edition      edition = AST::Edition::Rust2015;
     ::AST::Crate::Type  crate_type = ::AST::Crate::Type::Unknown;
     ::std::string   crate_name;
     ::std::string   crate_name_suffix;
@@ -68,6 +70,8 @@ struct ProgramParams
 
     // NOTE: If populated, nothing happens except for loading the target
     ::std::string   target_saveback;
+    // NOTE: if true, no parse/compilation performed (target is loaded though)
+    bool    print_cfgs = false;
 
     ::std::vector<const char*> lib_search_dirs;
     ::std::vector<const char*> libraries;
@@ -133,6 +137,7 @@ void init_debug_list()
         "Typecheck Expressions",
 
         "Expand HIR Annotate",
+        "Expand HIR Static Borrow",
         "Expand HIR Closures",
         "Expand HIR Calls",
         "Expand HIR VTables",
@@ -161,9 +166,9 @@ void init_debug_list()
 }
 
 void memory_dump(const char* phase) {
-#ifdef _WIN32
+#ifdef _MSC_VER
 #pragma comment(lib, "dbghelp.lib")
-    if( false )
+    if( getenv("MRUSTC_DUMPMEM") )
     {
         struct H {
             static int GenerateDump(const char* phase, EXCEPTION_POINTERS* pExceptionPointers)
@@ -242,6 +247,11 @@ int main(int argc, char *argv[])
         Target_SetCfg(params.target);
         });
 
+    if( params.print_cfgs )
+    {
+        Cfg_Dump(std::cout);
+        return 0;
+    }
     if( params.target_saveback != "" )
     {
         Target_ExportCurSpec(params.target_saveback);
@@ -265,7 +275,7 @@ int main(int argc, char *argv[])
     {
         // Parse the crate into AST
         AST::Crate crate = CompilePhase<AST::Crate>("Parse", [&]() {
-            return Parse_Crate(params.infile);
+            return Parse_Crate(params.infile, params.edition);
             });
         crate.m_test_harness = params.test_harness;
         crate.m_crate_name_suffix = params.crate_name_suffix;
@@ -585,6 +595,9 @@ int main(int argc, char *argv[])
         // Annotate how each node's result is used
         CompilePhaseV("Expand HIR Annotate", [&]() {
             HIR_Expand_AnnotateUsage(*hir_crate);
+            });
+        CompilePhaseV("Expand HIR Static Borrow", [&]() {
+            HIR_Expand_StaticBorrowConstants(*hir_crate);
             });
         // - Now that all types are known, closures can be desugared
         CompilePhaseV("Expand HIR Closures", [&]() {
@@ -976,6 +989,10 @@ ProgramParams::ProgramParams(int argc, char *argv[])
                         exit(1);
                     }
                 }
+                else if( optname == "print-cfgs") {
+                    no_optval();
+                    this->print_cfgs = true;
+                }
                 else {
                     ::std::cerr << "Unknown debug option: '" << optname << "'" << ::std::endl;
                     exit(1);
@@ -1153,6 +1170,24 @@ ProgramParams::ProgramParams(int argc, char *argv[])
             }
             else if( strcmp(arg, "--test") == 0 ) {
                 this->test_harness = true;
+            }
+            else if( strcmp(arg, "--edition") == 0 ) {
+                if (i == argc - 1) {
+                    ::std::cerr << "Flag " << arg << " requires an argument" << ::std::endl;
+                    exit(1);
+                }
+
+                const char* edition_str = argv[++i];
+                if( strcmp(edition_str, "2015") == 0 ) {
+                    this->edition = AST::Edition::Rust2015;
+                }
+                else if( strcmp(edition_str, "2018") == 0 ) {
+                    this->edition = AST::Edition::Rust2018;
+                }
+                else {
+                    ::std::cerr << "Unknown value for " << arg << " - '" << edition_str << "'" << ::std::endl;
+                    exit(1);
+                }
             }
             else {
                 ::std::cerr << "Unknown option '" << arg << "'" << ::std::endl;

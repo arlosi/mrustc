@@ -200,7 +200,8 @@ struct LowerHIR_ExprNode_Visitor:
             ) );
     }
     virtual void visit(::AST::ExprNode_TypeAnnotation& v) override {
-        // TODO: A proper node?
+        // TODO: Create a proper node for this
+        // - Using `Unsize` works pretty well, but isn't quite "correct"
         m_rv.reset( new ::HIR::ExprNode_Unsize( v.span(),
             LowerHIR_ExprNode_Inner( *v.m_value ),
             LowerHIR_Type(v.m_type)
@@ -212,43 +213,42 @@ struct LowerHIR_ExprNode_Visitor:
         for(const auto& arg : v.m_args)
             args.push_back( LowerHIR_ExprNode_Inner(*arg) );
 
-        TU_IFLET(::AST::Path::Class, v.m_path.m_class, Local, e,
+        if(const auto* e = v.m_path.m_class.opt_Local()) {
             m_rv.reset( new ::HIR::ExprNode_CallValue( v.span(),
-                ::HIR::ExprNodeP(new ::HIR::ExprNode_Variable( v.span(), e.name, v.m_path.m_bindings.value.as_Variable().slot )),
+                ::HIR::ExprNodeP(new ::HIR::ExprNode_Variable( v.span(), e->name, v.m_path.m_bindings.value.as_Variable().slot )),
                 mv$(args)
                 ) );
-        )
+        }
         else
         {
-            TU_MATCH_DEF(::AST::PathBinding_Value, (v.m_path.m_bindings.value), (e),
-            (
+            TU_MATCH_HDRA( (v.m_path.m_bindings.value), {)
+            default:
                 m_rv.reset( new ::HIR::ExprNode_CallPath( v.span(),
                     LowerHIR_Path(v.span(), v.m_path),
                     mv$( args )
                     ) );
-                ),
-            (Static,
+            TU_ARMA(Static, e) {
                 m_rv.reset( new ::HIR::ExprNode_CallValue( v.span(),
                     ::HIR::ExprNodeP(new ::HIR::ExprNode_PathValue( v.span(), LowerHIR_Path(v.span(), v.m_path), ::HIR::ExprNode_PathValue::STATIC )),
                     mv$(args)
                     ) );
-                ),
-            //(TypeAlias,
+                }
+            //TU_ARMA(TypeAlias, e) {
             //    TODO(v.span(), "CallPath -> TupleVariant TypeAlias");
-            //    ),
-            (EnumVar,
+            //    }
+            TU_ARMA(EnumVar, e) {
                 m_rv.reset( new ::HIR::ExprNode_TupleVariant( v.span(),
                     LowerHIR_GenericPath(v.span(), v.m_path), false,
                     mv$( args )
                     ) );
-                ),
-            (Struct,
+                }
+            TU_ARMA(Struct, e) {
                 m_rv.reset( new ::HIR::ExprNode_TupleVariant( v.span(),
                     LowerHIR_GenericPath(v.span(), v.m_path), true,
                     mv$( args )
                     ) );
-                )
-            )
+                }
+            }
         }
     }
     virtual void visit(::AST::ExprNode_CallMethod& v) override {
@@ -378,7 +378,7 @@ struct LowerHIR_ExprNode_Visitor:
             loop_node.m_code->visit(lv);
             if( ! lv.top_is_broken ) {
                 // If the loop never hit a 'break', the loop yields ! not ()
-                loop_node.m_res_type.m_data = ::HIR::TypeRef::Data::make_Diverge({});
+                loop_node.m_res_type = ::HIR::TypeRef::new_diverge();
             }
         }
     }
@@ -414,9 +414,13 @@ struct LowerHIR_ExprNode_Visitor:
     virtual void visit(::AST::ExprNode_IfLet& v) override {
         ::std::vector< ::HIR::ExprNode_Match::Arm>  arms;
 
+        std::vector<HIR::Pattern>   patterns;
+        patterns.reserve(v.m_patterns.size());
+        for(const auto& pat : v.m_patterns)
+            patterns.push_back( LowerHIR_Pattern(pat) );
         // - Matches pattern - Take true branch
         arms.push_back(::HIR::ExprNode_Match::Arm {
-            ::make_vec1( LowerHIR_Pattern(v.m_pattern) ),
+            mv$(patterns),
             ::HIR::ExprNodeP(),
             LowerHIR_ExprNode_Inner(*v.m_true)
             });
@@ -567,11 +571,19 @@ struct LowerHIR_ExprNode_Visitor:
         m_rv.reset( new ::HIR::ExprNode_Tuple( v.span(), mv$(vals) ) );
     }
     virtual void visit(::AST::ExprNode_NamedValue& v) override {
-        TU_IFLET(::AST::Path::Class, v.m_path.m_class, Local, e,
-            ASSERT_BUG(v.span(), v.m_path.m_bindings.value.is_Variable(), "Named value was a local, but wasn't bound - " << v.m_path);
-            auto slot = v.m_path.m_bindings.value.as_Variable().slot;
-            m_rv.reset( new ::HIR::ExprNode_Variable( v.span(), e.name, slot ) );
-        )
+        if(const auto* e = v.m_path.m_class.opt_Local())
+        {
+            TU_MATCH_HDRA( (v.m_path.m_bindings.value), {)
+            default:
+                BUG(v.span(), "Named value was a local, but wasn't bound to a known type - " << v.m_path);
+            TU_ARMA(Generic, binding) {
+                m_rv.reset( new ::HIR::ExprNode_ConstParam( v.span(), e->name, binding.index ) );
+                }
+            TU_ARMA(Variable, binding) {
+                m_rv.reset( new ::HIR::ExprNode_Variable( v.span(), e->name, binding.slot ) );
+                }
+            }
+        }
         else
         {
             TU_MATCH_HDRA( (v.m_path.m_bindings.value), {)

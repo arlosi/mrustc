@@ -32,7 +32,7 @@ PackageManifest::PackageManifest()
 
 namespace
 {
-    void target_edit_from_kv(PackageTarget& target, TomlKeyValue& kv, unsigned base_idx);
+    void target_edit_from_kv(const TomlLexer& lex, PackageTarget& target, TomlKeyValue& kv, unsigned base_idx);
 }
 
 PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
@@ -151,10 +151,24 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
                     rv.m_workspace_manifest = key_val.value.as_string();
                 }
             }
+            else if( key == "edition" )
+            {
+                assert(key_val.path.size() == 2);
+                assert(key_val.value.m_type == TomlValue::Type::String);
+                if(key_val.value.as_string() == "2015") {
+                    rv.m_edition = Edition::Rust2015;
+                }
+                else if(key_val.value.as_string() == "2018") {
+                    rv.m_edition = Edition::Rust2018;
+                }
+                else {
+                    throw ::std::runtime_error( ::format(toml_file.lexer(), ": Unknown edition value ", key_val.value) );
+                }
+            }
             else
             {
                 // Unknown value in `package`
-                ::std::cerr << "WARNING: Unknown key `" + key + "` in [package]" << ::std::endl;
+                ::std::cerr << toml_file.lexer() << ": WARNING: Unknown key `" << key << "` in [package]" << ::std::endl;
             }
         }
         else if( section == "lib" )
@@ -165,7 +179,7 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
                 it = rv.m_targets.insert(it, PackageTarget { PackageTarget::Type::Lib });
 
             // 2. Parse from the key-value pair
-            target_edit_from_kv(*it, key_val, 1);
+            target_edit_from_kv(toml_file.lexer(), *it, key_val, 1);
         }
         else if( section == "bin" )
         {
@@ -176,7 +190,7 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
             if (it == rv.m_targets.end())
                 it = rv.m_targets.insert(it, PackageTarget{ PackageTarget::Type::Bin });
 
-            target_edit_from_kv(*it, key_val, 2);
+            target_edit_from_kv(toml_file.lexer(), *it, key_val, 2);
         }
         else if (section == "test")
         {
@@ -187,7 +201,7 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
             if (it == rv.m_targets.end())
                 it = rv.m_targets.insert(it, PackageTarget{ PackageTarget::Type::Test });
 
-            target_edit_from_kv(*it, key_val, 2);
+            target_edit_from_kv(toml_file.lexer(), *it, key_val, 2);
         }
         else if (section == "bench")
         {
@@ -198,7 +212,7 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
             if (it == rv.m_targets.end())
                 it = rv.m_targets.insert(it, PackageTarget{ PackageTarget::Type::Bench });
 
-            target_edit_from_kv(*it, key_val, 2);
+            target_edit_from_kv(toml_file.lexer(), *it, key_val, 2);
         }
         else if( section == "dependencies" || section == "build-dependencies" || section == "dev-dependencies" )
         {
@@ -225,7 +239,7 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
         else if( section == "patch" )
         {
             //const auto& repo = key_val.path[1];
-            TODO("Support repository patches");
+            TODO(toml_file.lexer() << ":" << "Support repository patches");
         }
         else if( section == "profile" )
         {
@@ -243,7 +257,13 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
             // - It can be a target spec, or a cfg(foo) same as rustc
             bool success;
             if( cfg.substr(0, 4) == "cfg(" ) {
-                success = Cfg_Check(cfg.c_str());
+                try {
+                    success = Cfg_Check(cfg.c_str());
+                }
+                catch(const std::exception& e)
+                {
+                    throw ::std::runtime_error(format(toml_file.lexer(), ":", e.what()));
+                }
             }
             else {
                 // It's a target name
@@ -317,7 +337,7 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
         else
         {
             // Unknown manifest section
-            ::std::cerr << "WARNING: Unknown manifest section `" + section + "`" << ::std::endl;
+            ::std::cerr << toml_file.lexer() << ": WARNING: Unknown manifest section `" + section + "`" << ::std::endl;
             // TODO: Prevent this from firing multiple times in a row.
         }
     }
@@ -352,6 +372,11 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
     {
         throw ::std::runtime_error(format("Manifest file ", path, " didn't specify any targets (and src/{main,lib}.rs doesn't exist)"));
     }
+
+    //if(rv.m_edition == Edition::Unspec)
+    //{
+    //    rv.m_edition = Edition::Rust2015;
+    //}
 
     // Default target names
     for(auto& tgt : rv.m_targets)
@@ -390,6 +415,10 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
             tgt.m_name.reserve(rv.m_name.size());
             for(auto c : rv.m_name)
                 tgt.m_name += (c == '-' ? '_' : c);
+        }
+        if(tgt.m_edition == Edition::Unspec)
+        {
+            tgt.m_edition = rv.m_edition;
         }
     }
 
@@ -439,7 +468,7 @@ PackageManifest PackageManifest::load_from_toml(const ::std::string& path)
 
 namespace
 {
-    void target_edit_from_kv(PackageTarget& target, TomlKeyValue& kv, unsigned base_idx)
+    void target_edit_from_kv(const TomlLexer& lex, PackageTarget& target, TomlKeyValue& kv, unsigned base_idx)
     {
         const auto& key = kv.path[base_idx];
         if(key == "name")
@@ -487,6 +516,20 @@ namespace
             assert(kv.path.size() == base_idx + 1);
             target.m_is_own_harness = kv.value.as_bool();
         }
+        else if( key == "edition" )
+        {
+            assert(kv.path.size() == base_idx + 1);
+            assert(kv.value.m_type == TomlValue::Type::String);
+            if(kv.value.as_string() == "2015") {
+                target.m_edition = Edition::Rust2015;
+            }
+            else if(kv.value.as_string() == "2018") {
+                target.m_edition = Edition::Rust2018;
+            }
+            else {
+                throw ::std::runtime_error( ::format(lex, ": Unknown edition value ", kv.value) );
+            }
+        }
         else if( key == "crate-type" )
         {
             //assert_kv_size(kv, base_idx + 1);
@@ -506,7 +549,7 @@ namespace
                 }
                 // TODO: Other crate types
                 else {
-                    throw ::std::runtime_error(format("Unknown crate type - ", s));
+                    throw ::std::runtime_error(format(lex, ": Unknown crate type - ", s));
                 }
             }
         }
@@ -520,7 +563,7 @@ namespace
         }
         else
         {
-            throw ::std::runtime_error( ::format("TODO: Handle target option `", key, "`") );
+            throw ::std::runtime_error( ::format(lex, ": TODO: Handle target option `", key, "`") );
         }
     }
 }
@@ -847,7 +890,7 @@ void PackageManifest::load_build_script(const ::std::string& path)
             }
             // - Ignore
             else {
-                if( this->m_links != "" ) {
+                if( this->m_links != "" && std::find(key.begin(), key.end(), '-') == key.end() ) {
                     ::std::string   varname;
                     varname += "DEP_";
                     for(auto c : this->m_links)
@@ -875,17 +918,20 @@ void PackageRef::load_manifest(Repository& repo, const ::helpers::path& base_pat
         // If the path isn't set, check for:
         // - Git (checkout and use)
         // - Version and repository (check vendored, check cache, download into cache)
-        if( !m_manifest && this->has_git() )
+        if( this->has_git() )
         {
             DEBUG("Load dependency " << this->name() << " from git");
             throw "TODO: Git";
         }
 
-        if( !m_manifest && !this->get_version().m_bounds.empty() )
+        if( !this->get_version().m_bounds.empty() )
         {
             DEBUG("Load dependency " << this->name() << " from repo");
             m_manifest = repo.find(this->name(), this->get_version());
         }
+
+        // NOTE: kernel32-sys specifies both a path and a version for its `winapi` dep
+        // - Ideally, path would be processed first BUT the path in this case points at the workspace (which isn't handled well)
         if( !m_manifest && this->has_path() )
         {
             DEBUG("Load dependency " << m_name << " from path " << m_path);
@@ -902,8 +948,18 @@ void PackageRef::load_manifest(Repository& repo, const ::helpers::path& base_pat
                     throw ::std::runtime_error( format("Error loading manifest '", path, "' - ", e.what()) );
                 }
             }
+            else
+            {
+                throw ::std::runtime_error(format("Cannot open manifest ", path, " for ", this->name()));
+            }
         }
 
+        if( !(this->has_git() || !this->get_version().m_bounds.empty() || this->has_path()) )
+        {
+            //DEBUG("Load dependency " << this->name() << " from repo");
+            //m_manifest = repo.find(this->name(), this->get_version());
+            throw ::std::runtime_error(format("No source for ", this->name()));
+        }
 
         if( !m_manifest )
         {

@@ -172,10 +172,10 @@ public:
     void fmt_type(const ::HIR::TypeRef& ty)
     {
         TU_MATCH_HDRA( (ty.m_data), { )
-        case ::HIR::TypeRef::Data::TAG_Infer:
-        case ::HIR::TypeRef::Data::TAG_Generic:
-        case ::HIR::TypeRef::Data::TAG_ErasedType:
-        case ::HIR::TypeRef::Data::TAG_Closure:
+        case ::HIR::TypeData::TAG_Infer:
+        case ::HIR::TypeData::TAG_Generic:
+        case ::HIR::TypeData::TAG_ErasedType:
+        case ::HIR::TypeData::TAG_Closure:
             BUG(Span(), "Non-encodable type " << ty);
         TU_ARMA(Tuple, e) {
             m_os << "T" << e.size();
@@ -187,7 +187,7 @@ public:
             this->fmt_type(*e.inner);
             }
         TU_ARMA(Array, e) {
-            m_os << "A" << e.size_val;
+            m_os << "A" << e.size.as_Known();
             this->fmt_type(*e.inner);
             }
         TU_ARMA(Path, e) {

@@ -179,9 +179,8 @@
                 serialise(e.m_lifetime);
                 ),
             (Array,
-                assert(e.size_val != ~0u);
                 serialise_type(*e.inner);
-                m_out.write_u64c(e.size_val);
+                m_out.write_u64c(e.size.as_Known());
                 ),
             (Slice,
                 serialise_type(*e.inner);
@@ -852,6 +851,10 @@
                 ),
             (Const,
                 serialise_path(*e.p);
+                ),
+            (Generic,
+                m_out.write_string(e.name);
+                m_out.write_count(e.binding);
                 ),
             (ItemAddr,
                 serialise_path(*e);

@@ -13,12 +13,13 @@
 #include "../macro_rules/macro_rules.hpp"
 #include "../parse/common.hpp"  // For reparse from macros
 #include <ast/expr.hpp>
+#include <hir/hir.hpp>  // For macro lookup
 #include "cfg.hpp"
 
 DecoratorDef*   g_decorators_list = nullptr;
 MacroDef*   g_macros_list = nullptr;
-::std::map< ::std::string, ::std::unique_ptr<ExpandDecorator> >  g_decorators;
-::std::map< ::std::string, ::std::unique_ptr<ExpandProcMacro> >  g_macros;
+::std::map< RcString, ::std::unique_ptr<ExpandDecorator> >  g_decorators;
+::std::map< RcString, ::std::unique_ptr<ExpandProcMacro> >  g_macros;
 
 void Expand_Attrs(const ::AST::AttributeList& attrs, AttrStage stage,  ::std::function<void(const ExpandDecorator& d,const ::AST::Attribute& a)> f);
 void Expand_Mod(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::Path modpath, ::AST::Module& mod, unsigned int first_item = 0);
@@ -27,10 +28,10 @@ void Expand_Expr(::AST::Crate& crate, LList<const AST::Module*> modstack, ::std:
 void Expand_Path(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::Module& mod, ::AST::Path& p);
 
 void Register_Synext_Decorator(::std::string name, ::std::unique_ptr<ExpandDecorator> handler) {
-    g_decorators.insert(::std::make_pair( mv$(name), mv$(handler) )); 
+    g_decorators.insert(::std::make_pair( RcString::new_interned(name), mv$(handler) )); 
 }
 void Register_Synext_Macro(::std::string name, ::std::unique_ptr<ExpandProcMacro> handler) {
-    g_macros.insert(::std::make_pair( mv$(name), mv$(handler) ));
+    g_macros.insert(::std::make_pair( RcString::new_interned(name), mv$(handler) ));
 }
 void Register_Synext_Decorator_Static(DecoratorDef* def) {
     def->prev = g_decorators_list;
@@ -116,79 +117,347 @@ void Expand_Attrs(const ::AST::AttributeList& attrs, AttrStage stage,  ::AST::Cr
 
 ::std::unique_ptr<TokenStream> Expand_Macro_Inner(
     const ::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::Module& mod,
-    Span mi_span, const RcString& name, const RcString& input_ident, TokenTree& input_tt
+    Span mi_span, const AST::Path& path, const RcString& input_ident, TokenTree& input_tt
     )
 {
-    if( name == "" ) {
+    if( !path.is_valid() ) {
         return ::std::unique_ptr<TokenStream>();
     }
 
-    for( const auto& m : g_macros )
+    // Find the macro
+    /*const*/ ExpandProcMacro*  proc_mac = nullptr;
+    const MacroRules*   mr_ptr = nullptr;
+
+    if( path.is_trivial() )
     {
-        if( name == m.first )
+        const auto& name = path.as_trivial();
+        // 1. Search compiler-provided proc macros
+        for( const auto& m : g_macros )
         {
-            auto e = input_ident == ""
-                ? m.second->expand(mi_span, crate, input_tt, mod)
-                : m.second->expand_ident(mi_span, crate, input_ident, input_tt, mod)
-                ;
-            return e;
+            if( name == m.first )
+            {
+                proc_mac = &*m.second;
+                break;
+            }
+        }
+        // Iterate up the module tree, using the first located macro
+        for(const auto* ll = &modstack; ll; ll = ll->m_prev)
+        {
+            const auto& mac_mod = *ll->m_item;
+            for( const auto& mr : reverse(mac_mod.macros()) )
+            {
+                if( mr.name == name )
+                {
+                    DEBUG(mac_mod.path() << "::" << mr.name << " - Defined");
+                    mr_ptr = &*mr.data;
+                    break;
+                }
+            }
+            if( mr_ptr )
+                break;
+
+            // Find the last macro of this name (allows later #[macro_use] definitions to override)
+            const MacroRules* last_mac = nullptr;
+            for( const auto& mri : mac_mod.macro_imports_res() )
+            {
+                //DEBUG("- " << mri.name);
+                if( mri.name == name )
+                {
+                    DEBUG("?::" << mri.name << " - Imported");
+
+                    last_mac = mri.data;
+                }
+            }
+            if( last_mac )
+            {
+                mr_ptr = last_mac;
+                break;
+            }
+        }
+    }
+    else
+    {
+        // HACK: If the crate name is empty, look up builtins
+        if( path.is_absolute() && path.nodes().size() == 1 && path.m_class.as_Absolute().crate == "" )
+        {
+            const auto& name = path.nodes()[0].name();
+            for( const auto& m : g_macros )
+            {
+                if( name == m.first )
+                {
+                    proc_mac = &*m.second;
+                    break;
+                }
+            }
+        }
+
+        if( !proc_mac && !mr_ptr )
+        {
+            // Resolve the path, following use statements (if required)
+            // - Only mr_ptr matters, as proc_mac is about builtins
+
+            TAGGED_UNION(ModuleRef, None,
+                (None, struct {}),
+                (Ast, const AST::Module*),
+                (Hir, const HIR::Module*)
+                );
+            struct H {
+                static bool find_in_ast(const AST::Module& mod, const RcString& name, std::function<bool(const AST::Item& i)> cb)
+                {
+                    for(const auto& i : mod.items())
+                    {
+                        if(i.name == name)
+                        {
+                            if( cb(i.data) )
+                                return true;
+                        }
+                        if(const auto* use_stmt = i.data.opt_Use())
+                        {
+                            for(const auto& e : use_stmt->entries)
+                            {
+                                if( e.name == name )
+                                {
+                                    TODO(Span(), "Look through use statements - " << e.path);
+                                }
+                            }
+                        }
+                    }
+                    for(const auto& i : mod.items())
+                    {
+                        if(const auto* use_stmt = i.data.opt_Use())
+                        {
+                            for(const auto& e : use_stmt->entries)
+                            {
+                                if( e.name == "" )
+                                {
+                                    TODO(Span(), "Look through glob use statements (" << e.path << ")");
+                                }
+                            }
+                        }
+                    }
+                    return false;
+                }
+                static ModuleRef get_root(const AST::Crate& crate, const RcString& crate_name)
+                {
+                    if(crate_name == "")
+                    {
+                        return ModuleRef::make_Ast(&crate.m_root_module);
+                    }
+                    else
+                    {
+                        return ModuleRef::make_Hir(&crate.m_extern_crates.at(crate_name).m_hir->m_root_module);
+                    }
+                }
+                static ModuleRef get_submod_in_ast(const Span& sp, const AST::Crate& crate, const AST::Module& mod, const RcString& name)
+                {
+                    ModuleRef   rv;
+                    H::find_in_ast(mod, name, [&](const AST::Item& i_data)->bool {
+                        switch(i_data.tag())
+                        {
+                        case AST::Item::TAG_Crate:
+                            rv = ModuleRef::make_Hir(&crate.m_extern_crates.at(i_data.as_Crate().name).m_hir->m_root_module);
+                            return true;
+                        case AST::Item::TAG_Module:
+                            rv = ModuleRef::make_Ast(&i_data.as_Module());
+                            return true;
+                        case AST::Item::TAG_Struct:
+                        case AST::Item::TAG_Union:
+                        case AST::Item::TAG_Enum:
+                        case AST::Item::TAG_Type:
+                            ERROR(sp, E0000, "Macro path component points at a type");
+                            break;
+                        default:
+                            break;
+                        }
+                        return false;
+                        });
+                    return rv;
+                }
+                static ModuleRef get_submod_in_hir(const Span& sp, const AST::Crate& crate, const HIR::Module& mod, const RcString& name)
+                {
+                    ModuleRef   rv;
+                    TODO(sp, "Search HIR");
+                }
+                static ModuleRef get_submod(const Span& sp, const AST::Crate& crate, const ModuleRef& mod_ref, const RcString& name)
+                {
+                    TU_MATCH_HDRA( (mod_ref), {)
+                    TU_ARMA(None, e)
+                        BUG(sp, "");
+                    TU_ARMA(Ast, ast_ptr)
+                        return get_submod_in_ast(sp, crate, *ast_ptr, name);
+                    TU_ARMA(Hir, hir_ptr)
+                        return get_submod_in_hir(sp, crate, *hir_ptr, name);
+                    }
+                    BUG(sp, "");
+                }
+            };
+
+            // 1. Convert to absolute (but not canonical)
+            AST::Path   real_path;
+            TU_MATCH_HDRA( (path.m_class), {)
+            TU_ARMA(Invalid,  e) {
+                throw ::std::runtime_error("Path::nodes() on Invalid");
+                }
+            TU_ARMA(Local, e)
+                BUG(mi_span, "Local path should have been handled (trivial)");
+            TU_ARMA(Relative, e) {
+                ASSERT_BUG(mi_span, e.nodes.size() > 1, "Too few nodes (should have been trivial?) - " << path);
+                // 1. Search current scope (current module), seeking up anon modules
+                const LList<const AST::Module*>* cur_mod = &modstack;
+                do {
+                    // Search for a matching module/crate
+                    if( H::find_in_ast(*cur_mod->m_item, e.nodes[0].name(), [&](const AST::Item& i_data)->bool {
+                        switch(i_data.tag())
+                        {
+                        case AST::Item::TAG_Crate:
+                            real_path = AST::Path(i_data.as_Crate().name, {});
+                            return true;
+                        case AST::Item::TAG_Module:
+                            real_path = AST::Path(i_data.as_Module().path());
+                            return true;
+                        case AST::Item::TAG_Struct:
+                        case AST::Item::TAG_Union:
+                        case AST::Item::TAG_Enum:
+                        case AST::Item::TAG_Type:
+                            ERROR(mi_span, E0000, "Macro path component points at a type - " << path);
+                            break;
+                        default:
+                            break;
+                        }
+                        return false;
+                        }) )
+                    {
+                        break;
+                    }
+                } while(cur_mod->m_item->is_anon());
+                // 2. If not found, look for a matching crate name
+                if( !real_path.is_valid() )
+                {
+                    TODO(mi_span, "Seach for extern crates");
+                }
+                // 3. Error if not found
+                if( !real_path.is_valid() )
+                {
+                    ERROR(mi_span, E0000, "Cannot find module for " << path);
+                }
+                for(size_t i = 1; i < e.nodes.size(); i ++)
+                    real_path.nodes().push_back(e.nodes[i]);
+                }
+            TU_ARMA(Self, e) {
+                auto new_path = mod.path();
+                if(new_path.nodes().back().name().c_str()[0] == '#')
+                    TODO(mi_span, "Handle self paths in anon");
+                for(size_t i = 0; i < e.nodes.size(); i ++)
+                    new_path.nodes().push_back(e.nodes[i]);
+                real_path = mv$(new_path);
+                }
+            TU_ARMA(Super, e) {
+                auto new_path = mod.path();
+                if(new_path.nodes().back().name().c_str()[0] == '#')
+                    TODO(mi_span, "Handle super paths in anon");
+                for(auto i = e.count; i--; )
+                {
+                    if(new_path.nodes().empty())
+                        ERROR(mi_span, E0000, "Invalid path (too many `super`) - " << path);
+                    new_path.nodes().pop_back();
+                }
+                for(size_t i = 0; i < e.nodes.size(); i ++)
+                    new_path.nodes().push_back(e.nodes[i]);
+                real_path = mv$(new_path);
+                }
+            TU_ARMA(Absolute, e) {
+                // No change
+                real_path = AST::Path(path);
+                }
+            TU_ARMA(UFCS, e) {
+                BUG(mi_span, "UFCS path to macro - " << path);
+                }
+            }
+            // 2. Walk path to find item
+            auto& real_path_abs = real_path.m_class.as_Absolute();
+            auto cur_mod = H::get_root(crate, real_path_abs.crate);
+            for(size_t i = 0; i < real_path_abs.nodes.size() - 1; i ++)
+            {
+                cur_mod = H::get_submod(mi_span, crate, cur_mod, real_path_abs.nodes[i].name());
+                if(cur_mod.is_None())
+                    ERROR(mi_span, E0000, "Unable to locate component " << i << " of " << real_path);
+            }
+            const auto& final_name = real_path_abs.nodes.back().name();
+            TU_MATCH_HDRA( (cur_mod), {)
+            TU_ARMA(None, e)
+                BUG(mi_span, "Should have errored earlier");
+            TU_ARMA(Ast, e) {
+                // Look in the pre-calculated macro list (TODO: Should really be using the main resolve machinery)
+                for(const auto& mac : e->macro_imports_res())
+                {
+                    if(mac.name == final_name) {
+                        mr_ptr = mac.data;
+                        break;
+                    }
+                }
+                //if( !mr_ptr )
+                //{
+                //    H::find_in_ast(*e, real_path_abs.nodes.back().name(), [&](const AST::Item& i)->bool {
+                //        if(const auto* e = i.opt_Macro())
+                //        {
+                //            mr_ptr = &**e;
+                //            return true;
+                //        }
+                //        return false;
+                //        });
+                //}
+                }
+            TU_ARMA(Hir, e) {
+                TODO(mi_span, "Look up macros in HIR modules");
+                }
+            }
+            if(!mr_ptr)
+                ERROR(mi_span, E0000, "");
         }
     }
 
-
-    // Iterate up the module tree, using the first located macro
-    for(const auto* ll = &modstack; ll; ll = ll->m_prev)
+    if( mr_ptr )
     {
-        const auto& mac_mod = *ll->m_item;
-        for( const auto& mr : mac_mod.macros() )
-        {
-            //DEBUG("- " << mr.name);
-            if( mr.name == name )
-            {
-                if( input_ident != "" )
-                    ERROR(mi_span, E0000, "macro_rules! macros can't take an ident");
-
-                auto e = Macro_InvokeRules(name.c_str(), *mr.data, mi_span, mv$(input_tt), mod);
-                return e;
-            }
-        }
-        // Find the last macro of this name (allows later #[macro_use] definitions to override)
-        const MacroRules* last_mac = nullptr;
-        for( const auto& mri : mac_mod.macro_imports_res() )
-        {
-            //DEBUG("- " << mri.name);
-            if( mri.name == name )
-            {
-                if( input_ident != "" )
-                    ERROR(mi_span, E0000, "macro_rules! macros can't take an ident");
-
-                last_mac = mri.data;
-            }
-        }
-        if( last_mac )
-        {
-            auto e = Macro_InvokeRules(name.c_str(), *last_mac, mi_span, mv$(input_tt), mod);
-            return e;
-        }
+        // TODO: If `mr_ptr` is tagged with #[rustc_builtin_macro], look for a matching entry in `g_macros`
     }
 
+    if( proc_mac )
+    {
+        auto e = input_ident == ""
+            ? proc_mac->expand(mi_span, crate, input_tt, mod)
+            : proc_mac->expand_ident(mi_span, crate, input_ident, input_tt, mod)
+            ;
+        return e;
+    }
+    else if( mr_ptr )
+    {
+        if( input_ident != "" )
+            ERROR(mi_span, E0000, "macro_rules! macros can't take an ident");
+
+        DEBUG("Invoking macro_rules " << path << " " << mr_ptr);
+        auto e = Macro_InvokeRules(path.is_trivial() ? path.as_trivial().c_str() : "", *mr_ptr, mi_span, mv$(input_tt), crate, mod);
+        e->parse_state().crate = &crate;
+        return e;
+    }
+    else
+    {
+    }
     // Error - Unknown macro name
-    ERROR(mi_span, E0000, "Unknown macro '" << name << "'");
+    ERROR(mi_span, E0000, "Unknown macro " << path);
 }
 ::std::unique_ptr<TokenStream> Expand_Macro(
     const ::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::Module& mod,
-    Span mi_span, const RcString& name, const RcString& input_ident, TokenTree& input_tt
+    Span mi_span, const AST::Path& name, const RcString& input_ident, TokenTree& input_tt
     )
 {
     auto rv = Expand_Macro_Inner(crate, modstack, mod, mi_span, name, input_ident, input_tt);
     assert(rv);
     rv->parse_state().module = &mod;
-    rv->parse_state().crate = &crate;
     return rv;
 }
 ::std::unique_ptr<TokenStream> Expand_Macro(const ::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::Module& mod, ::AST::MacroInvocation& mi)
 {
-    return Expand_Macro(crate, modstack, mod,  mi.span(), mi.name(), mi.input_ident(), mi.input_tt());
+    return Expand_Macro(crate, modstack, mod,  mi.span(), mi.path(), mi.input_ident(), mi.input_tt());
 }
 
 void Expand_Pattern(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::Module& mod, ::AST::Pattern& pat, bool is_refutable)
@@ -333,8 +602,10 @@ void Expand_Path(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST:
         {
             for(auto& typ : node.args().m_types)
                 Expand_Type(crate, modstack, mod, typ);
-            for(auto& aty : node.args().m_assoc)
+            for(auto& aty : node.args().m_assoc_equal)
                 Expand_Type(crate, modstack, mod, aty.second);
+            for(auto& aty : node.args().m_assoc_bound)
+                Expand_Path(crate, modstack, mod, aty.second);
         }
         };
 
@@ -403,7 +674,7 @@ struct CExpandExpr:
             // If the node was a macro, and it was consumed, reset it
             if( auto* n_mac = dynamic_cast<AST::ExprNode_Macro*>(cnode.get()) )
             {
-                if( n_mac->m_name == "" )
+                if( !n_mac->m_path.is_valid() )
                     cnode.reset();
             }
             if( this->replacement ) {
@@ -439,14 +710,14 @@ struct CExpandExpr:
 
     ::AST::ExprNodeP visit_macro(::AST::ExprNode_Macro& node, ::std::vector< ::AST::ExprNodeP>* nodes_out)
     {
-        TRACE_FUNCTION_F(node.m_name << "!");
-        if( node.m_name == "" ) {
+        TRACE_FUNCTION_F(node.m_path << "!");
+        if( !node.m_path.is_valid() ) {
             return ::AST::ExprNodeP();
         }
 
         ::AST::ExprNodeP    rv;
         auto& mod = this->cur_mod();
-        auto ttl = Expand_Macro( crate, modstack, mod,  node.span(),  node.m_name, node.m_ident, node.m_tokens );
+        auto ttl = Expand_Macro( crate, modstack, mod,  node.span(),  node.m_path, node.m_ident, node.m_tokens );
         if( !ttl.get() )
         {
             // No expansion
@@ -491,14 +762,14 @@ struct CExpandExpr:
             }
         }
 
-        node.m_name = "";
+        node.m_path = AST::Path();
         return mv$(rv);
     }
 
     void visit(::AST::ExprNode_Macro& node) override
     {
-        TRACE_FUNCTION_F("ExprNode_Macro - name = " << node.m_name);
-        if( node.m_name == "" ) {
+        TRACE_FUNCTION_F("ExprNode_Macro - name = " << node.m_path);
+        if( !node.m_path.is_valid() ) {
             return ;
         }
 
@@ -719,7 +990,8 @@ struct CExpandExpr:
         this->visit_nodelete(node, node.m_false);
     }
     void visit(::AST::ExprNode_IfLet& node) override {
-        Expand_Pattern(crate, modstack, this->cur_mod(),  node.m_pattern, true);
+        for(auto& pat : node.m_patterns)
+            Expand_Pattern(crate, modstack, this->cur_mod(),  pat, true);
         this->visit_nodelete(node, node.m_value);
         this->visit_nodelete(node, node.m_true);
         this->visit_nodelete(node, node.m_false);
@@ -938,11 +1210,23 @@ void Expand_Expr(::AST::Crate& crate, LList<const AST::Module*> modstack, AST::E
 
 void Expand_GenericParams(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::Module& mod,  ::AST::GenericParams& params)
 {
-    for(auto& ty_def : params.ty_params())
+    for(auto& param_def : params.m_params)
     {
-        Expand_Type(crate, modstack, mod,  ty_def.get_default());
+        TU_MATCH_HDRA( (param_def), {)
+        TU_ARMA(None, e) {
+            // Ignore
+            }
+        TU_ARMA(Lifetime, e) {
+            }
+        TU_ARMA(Type, ty_def) {
+            Expand_Type(crate, modstack, mod,  ty_def.get_default());
+            }
+        TU_ARMA(Value, val_def) {
+            Expand_Type(crate, modstack, mod,  val_def.type());
+            }
+        }
     }
-    for(auto& bound : params.bounds())
+    for(auto& bound : params.m_bounds)
     {
         TU_MATCHA( (bound), (be),
         (None,
@@ -1003,17 +1287,17 @@ void Expand_Impl(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST:
 
         auto attrs = mv$(i.attrs);
         Expand_Attrs_CfgAttr(attrs);
-        Expand_Attrs(attrs, AttrStage::Pre,  crate, AST::Path(), mod, *i.data);
+        Expand_Attrs(attrs, AttrStage::Pre,  crate, AST::Path(), mod, *i.data); // TODO: UFCS path
 
-        TU_MATCH_DEF(AST::Item, (*i.data), (e),
-        (
+        TU_MATCH_HDRA( (*i.data), {)
+        default:
             BUG(Span(), "Unknown item type in impl block - " << i.data->tag_str());
-            ),
-        (None, ),
-        (MacroInv,
-            if( e.name() != "" )
+        TU_ARMA(None, e) {
+            }
+        TU_ARMA(MacroInv, e) {
+            if( e.path().is_valid() )
             {
-                TRACE_FUNCTION_F("Macro invoke " << e.name());
+                TRACE_FUNCTION_F("Macro invoke " << e.path());
                 // Move out of the module to avoid invalidation if a new macro invocation is added
                 auto mi_owned = mv$(e);
 
@@ -1031,8 +1315,8 @@ void Expand_Impl(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST:
                 // Move back in (using the index, as the old pointr may be invalid)
                 impl.items()[idx].data->as_MacroInv() = mv$(mi_owned);
             }
-            ),
-        (Function,
+            }
+        TU_ARMA(Function, e) {
             TRACE_FUNCTION_F("fn " << i.name);
             for(auto& arg : e.args()) {
                 Expand_Pattern(crate, modstack, mod,  arg.first, false);
@@ -1040,22 +1324,22 @@ void Expand_Impl(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST:
             }
             Expand_Type(crate, modstack, mod,  e.rettype());
             Expand_Expr(crate, modstack, e.code());
-            ),
-        (Static,
+            }
+        TU_ARMA(Static, e) {
             TRACE_FUNCTION_F("static " << i.name);
             Expand_Expr(crate, modstack, e.value());
             Expand_Type(crate, modstack, mod,  e.type());
-            ),
-        (Type,
+            }
+        TU_ARMA(Type, e) {
             TRACE_FUNCTION_F("type " << i.name);
             Expand_Type(crate, modstack, mod,  e.type());
-            )
-        )
+            }
+        }
 
         // Run post-expansion decorators and restore attributes
         {
             auto& i = impl.items()[idx];
-            Expand_Attrs(attrs, AttrStage::Post,  crate, AST::Path(), mod, *i.data);
+            Expand_Attrs(attrs, AttrStage::Post,  crate, AST::Path(), mod, *i.data); // TODO: UFCS path
             // TODO: How would this be populated? It got moved out?
             if( i.attrs.m_items.size() == 0 )
                 i.attrs = mv$(attrs);
@@ -1106,7 +1390,11 @@ void Expand_Mod(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::
     if( crate.m_prelude_path != AST::Path() )
     {
         if( mod.m_insert_prelude && ! mod.is_anon() ) {
+            DEBUG("> Adding custom prelude " << crate.m_prelude_path);
             mod.add_item(Span(), false, "", ::AST::UseItem { Span(), ::make_vec1(::AST::UseItem::Ent { Span(), crate.m_prelude_path, "" }) }, {});
+        }
+        else {
+            DEBUG("> Not inserting custom prelude (anon or disabled)");
         }
     }
 
@@ -1132,14 +1420,15 @@ void Expand_Mod(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::
             // Move out of the module to avoid invalidation if a new macro invocation is added
             auto mi_owned = mv$(e);
 
-            TRACE_FUNCTION_F("Macro invoke " << mi_owned.name());
+            TRACE_FUNCTION_F("Macro invoke " << mi_owned.path());
 
             auto ttl = Expand_Macro(crate, modstack, mod, mi_owned);
-            assert( mi_owned.name() != "");
+            assert( mi_owned.path().is_valid() );
 
             if( ttl.get() )
             {
                 // Re-parse tt
+                // TODO: All new items should be placed just after this?
                 assert(ttl.get());
                 DEBUG("-- Parsing as mod items");
                 Parse_ModRoot_Items(*ttl, mod);
@@ -1288,15 +1577,14 @@ void Expand_Mod(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::
                 Expand_Attrs_CfgAttr(attrs);
                 Expand_Attrs(attrs, AttrStage::Pre,  crate, AST::Path(), mod, ti.data);
 
-                TU_MATCH_DEF(AST::Item, (ti.data), (e),
-                (
+                TU_MATCH_HDRA( (ti.data), {)
+                default:
                     BUG(Span(), "Unknown item type in trait block - " << ti.data.tag_str());
-                    ),
-                (None, ),
-                (MacroInv,
-                    if( e.name() != "" )
+                TU_ARMA(None, e) {}
+                TU_ARMA(MacroInv, e) {
+                    if( e.path().is_valid() )
                     {
-                        TRACE_FUNCTION_F("Macro invoke " << e.name());
+                        TRACE_FUNCTION_F("Macro invoke " << e.path());
                         // Move out of the module to avoid invalidation if a new macro invocation is added
                         auto mi_owned = mv$(e);
 
@@ -1317,8 +1605,8 @@ void Expand_Mod(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::
                         // Move back in (using the index, as the old pointer may be invalid)
                         trait_items[idx].data.as_MacroInv() = mv$(mi_owned);
                     }
-                    ),
-                (Function,
+                    }
+                TU_ARMA(Function, e) {
                     Expand_GenericParams(crate, modstack, mod,  e.params());
                     for(auto& arg : e.args()) {
                         Expand_Pattern(crate, modstack, mod,  arg.first, false);
@@ -1326,15 +1614,15 @@ void Expand_Mod(::AST::Crate& crate, LList<const AST::Module*> modstack, ::AST::
                     }
                     Expand_Type(crate, modstack, mod,  e.rettype());
                     Expand_Expr(crate, modstack, e.code());
-                    ),
-                (Static,
+                    }
+                TU_ARMA(Static, e) {
                     Expand_Expr(crate, modstack, e.value());
                     Expand_Type(crate, modstack, mod,  e.type());
-                    ),
-                (Type,
+                    }
+                TU_ARMA(Type, e) {
                     Expand_Type(crate, modstack, mod,  e.type());
-                    )
-                )
+                    }
+                }
 
                 {
                     auto& ti = trait_items[idx];
@@ -1412,12 +1700,12 @@ void Expand(::AST::Crate& crate)
     // Fill macro/decorator map from init list
     while(g_decorators_list)
     {
-        g_decorators.insert(::std::make_pair( mv$(g_decorators_list->name), mv$(g_decorators_list->def) ));
+        g_decorators.insert(::std::make_pair( RcString::new_interned(g_decorators_list->name), mv$(g_decorators_list->def) ));
         g_decorators_list = g_decorators_list->prev;
     }
     while(g_macros_list)
     {
-        g_macros.insert(::std::make_pair(mv$(g_macros_list->name), mv$(g_macros_list->def)));
+        g_macros.insert(::std::make_pair(RcString::new_interned(g_macros_list->name), mv$(g_macros_list->def)));
         g_macros_list = g_macros_list->prev;
     }
     for(const auto& e : g_decorators)
@@ -1476,6 +1764,81 @@ void Expand(::AST::Crate& crate)
 
     // Post-process
     Expand_Mod_IndexAnon(crate, crate.m_root_module);
+
+    // Extract exported macros
+
+    {
+        auto& exported_macros = crate.m_exported_macros;
+
+        ::std::vector< ::AST::Module*>    mods;
+        mods.push_back( &crate.m_root_module );
+        do
+        {
+            auto& mod = *mods.back();
+            mods.pop_back();
+
+            for( /*const*/ auto& mac : mod.macros() ) {
+                if( mac.data->m_exported ) {
+                    auto res = exported_macros.insert( ::std::make_pair(mac.name,  &*mac.data) );
+                    if( res.second )
+                        DEBUG("- Define " << mac.name << "!");
+                }
+                else {
+                    DEBUG("- Non-exported " << mac.name << "!");
+                }
+            }
+
+            for(auto& i : mod.items()) {
+                if( i.data.is_Module() )
+                    mods.push_back( &i.data.as_Module() );
+            }
+        } while( mods.size() > 0 );
+
+        // - Exported macros imported by the root (is this needed?)
+        for( auto& mac : crate.m_root_module.macro_imports_res() ) {
+            if( mac.data->m_exported && mac.name != "" ) {
+                auto v = ::std::make_pair( mac.name, mac.data );
+                auto it = exported_macros.find(mac.name);
+                if( it == exported_macros.end() )
+                {
+                    auto res = exported_macros.insert( mv$(v) );
+                    DEBUG("- Import " << mac.name << "! (from \"" << res.first->second->m_source_crate << "\")");
+                }
+                else if( v.second->m_rules.empty() ) {
+                    // Skip
+                }
+                else {
+                    DEBUG("- Replace " << mac.name << "! (from \"" << it->second->m_source_crate << "\") with one from \"" << v.second->m_source_crate << "\"");
+                    it->second = mv$( v.second );
+                }
+            }
+        }
+        // - Re-exported macros (ignore proc macros for now?)
+        for( const auto& mac : crate.m_root_module.m_macro_imports )
+        {
+            if( mac.is_pub )
+            {
+                if( !mac.macro_ptr ) {
+                    continue ;
+                }
+                auto v = ::std::make_pair( mac.name, mac.macro_ptr );
+
+                auto it = exported_macros.find(mac.name);
+                if( it == exported_macros.end() )
+                {
+                    auto res = exported_macros.insert( mv$(v) );
+                    DEBUG("- Import " << mac.name << "! (from \"" << res.first->second->m_source_crate << "\")");
+                }
+                else if( v.second->m_rules.empty() ) {
+                    // Skip
+                }
+                else {
+                    DEBUG("- Replace " << mac.name << "! (from \"" << it->second->m_source_crate << "\") with one from \"" << v.second->m_source_crate << "\"");
+                    it->second = mv$( v.second );
+                }
+            }
+        }
+    }
 }
 
 

@@ -14,6 +14,7 @@
 #include "pattern_checks.hpp"
 #include <parse/interpolated_fragment.hpp>
 #include <ast/expr.hpp>
+#include <ast/crate.hpp>
 
 class ParameterMappings
 {
@@ -145,7 +146,7 @@ public:
 };
 
 // === Prototypes ===
-unsigned int Macro_InvokeRules_MatchPattern(const Span& sp, const MacroRules& rules, TokenTree input, AST::Module& mod,  ParameterMappings& bound_tts);
+unsigned int Macro_InvokeRules_MatchPattern(const Span& sp, const MacroRules& rules, TokenTree input, const AST::Crate& crate, AST::Module& mod,  ParameterMappings& bound_tts);
 void Macro_InvokeRules_CountSubstUses(ParameterMappings& bound_tts, const ::std::vector<MacroExpansionEnt>& contents);
 
 // ------------------------------------
@@ -407,6 +408,7 @@ class MacroExpander:
 
     const RcString  m_crate_name;
     Span m_invocation_span;
+    AST::Edition    m_invocation_edition;
 
     ParameterMappings m_mappings;
     MacroExpandState    m_state;
@@ -418,10 +420,12 @@ class MacroExpander:
 public:
     MacroExpander(const MacroExpander& x) = delete;
 
-    MacroExpander(const ::std::string& macro_name, const Span& sp, const Ident::Hygiene& parent_hygiene, const ::std::vector<MacroExpansionEnt>& contents, ParameterMappings mappings, RcString crate_name):
+    MacroExpander(const ::std::string& macro_name, const Span& sp, AST::Edition edition, const Ident::Hygiene& parent_hygiene, const ::std::vector<MacroExpansionEnt>& contents, ParameterMappings mappings, RcString crate_name):
+        TokenStream(ParseState(AST::Edition::Rust2015)),    // TODO: Get from the source crate
         m_macro_filename( FMT("Macro:" << macro_name) ),
         m_crate_name( mv$(crate_name) ),
         m_invocation_span( sp ),
+        m_invocation_edition( edition ),
         m_mappings( mv$(mappings) ),
         m_state( contents, m_mappings ),
         m_hygiene( Ident::Hygiene::new_scope_chained(parent_hygiene) )
@@ -494,18 +498,33 @@ InterpolatedFragment Macro_HandlePatternCap(TokenStream& lex, MacroPatEnt::Type 
     case MacroPatEnt::PAT_LIFETIME:
         GET_CHECK_TOK(tok, lex, TOK_LIFETIME);
         return InterpolatedFragment( TokenTree(lex.getHygiene(), tok) );
+    case MacroPatEnt::PAT_LITERAL:
+        GET_TOK(tok, lex);
+        switch(tok.type())
+        {
+        case TOK_INTEGER:
+        case TOK_FLOAT:
+        case TOK_STRING:
+        case TOK_BYTESTRING:
+        case TOK_RWORD_TRUE:
+        case TOK_RWORD_FALSE:
+            break;
+        default:
+            throw ParseError::Unexpected(lex, tok, {TOK_INTEGER, TOK_FLOAT, TOK_STRING, TOK_BYTESTRING, TOK_RWORD_TRUE, TOK_RWORD_FALSE});
+        }
+        return InterpolatedFragment( TokenTree(lex.getHygiene(), tok) );
     }
     throw "";
 }
 
 /// Parse the input TokenTree according to the `macro_rules!` patterns and return a token stream of the replacement
-::std::unique_ptr<TokenStream> Macro_InvokeRules(const char *name, const MacroRules& rules, const Span& sp, TokenTree input, AST::Module& mod)
+::std::unique_ptr<TokenStream> Macro_InvokeRules(const char *name, const MacroRules& rules, const Span& sp, TokenTree input, const AST::Crate& crate, AST::Module& mod)
 {
     TRACE_FUNCTION_F("'" << name << "', " << input);
     DEBUG("rules.m_hygiene = " << rules.m_hygiene);
 
     ParameterMappings   bound_tts;
-    unsigned int    rule_index = Macro_InvokeRules_MatchPattern(sp, rules, mv$(input), mod,  bound_tts);
+    unsigned int    rule_index = Macro_InvokeRules_MatchPattern(sp, rules, mv$(input), crate, mod,  bound_tts);
 
     const auto& rule = rules.m_rules.at(rule_index);
 
@@ -519,7 +538,7 @@ InterpolatedFragment Macro_HandlePatternCap(TokenStream& lex, MacroPatEnt::Type 
     // Run through the expansion counting the number of times each fragment is used
     Macro_InvokeRules_CountSubstUses(bound_tts, rule.m_contents);
 
-    TokenStream* ret_ptr = new MacroExpander(name, sp, rules.m_hygiene, rule.m_contents, mv$(bound_tts), rules.m_source_crate);
+    TokenStream* ret_ptr = new MacroExpander(name, sp, crate.m_edition, rules.m_hygiene, rule.m_contents, mv$(bound_tts), rules.m_source_crate);
 
     return ::std::unique_ptr<TokenStream>( ret_ptr );
 }
@@ -1741,17 +1760,31 @@ namespace
             return consume_vis(lex);
         case MacroPatEnt::PAT_LIFETIME:
             return lex.consume_if(TOK_LIFETIME);
+        case MacroPatEnt::PAT_LITERAL:
+            switch(lex.next())
+            {
+            case TOK_INTEGER:
+            case TOK_FLOAT:
+            case TOK_STRING:
+            case TOK_RWORD_TRUE:
+            case TOK_RWORD_FALSE:
+                lex.consume();
+                return true;
+            default:
+                return false;
+            }
         }
         return true;
     }
 }
 
-unsigned int Macro_InvokeRules_MatchPattern(const Span& sp, const MacroRules& rules, TokenTree input, AST::Module& mod,  ParameterMappings& bound_tts)
+unsigned int Macro_InvokeRules_MatchPattern(const Span& sp, const MacroRules& rules, TokenTree input, const AST::Crate& crate, AST::Module& mod,  ParameterMappings& bound_tts)
 {
-    TRACE_FUNCTION;
+    TRACE_FUNCTION_F(rules.m_rules.size() << " options");
     ASSERT_BUG(sp, rules.m_rules.size() > 0, "Empty macro_rules set");
 
     ::std::vector< ::std::pair<size_t, ::std::vector<bool>> >    matches;
+    ::std::vector< std::pair<size_t, eTokenType> >  fail_pos;
     for(size_t i = 0; i < rules.m_rules.size(); i ++)
     {
         auto lex = TokenStreamRO(input);
@@ -1832,14 +1865,15 @@ unsigned int Macro_InvokeRules_MatchPattern(const Span& sp, const MacroRules& ru
         else
         {
             DEBUG(i << " FAILED");
+            fail_pos.push_back( std::make_pair(lex.position(), lex.next()) );
         }
     }
 
     if( matches.size() == 0 )
     {
         // ERROR!
-	// TODO: Keep track of where each arm failed.
-        TODO(sp, "No arm matched");
+        // TODO: Keep track of where each arm failed.
+        TODO(sp, "No arm matched - " << fail_pos);
     }
     else
     {
@@ -1850,7 +1884,7 @@ unsigned int Macro_InvokeRules_MatchPattern(const Span& sp, const MacroRules& ru
         const auto& history = matches[0].second;
         DEBUG("Evalulating arm " << i);
 
-        auto lex = TTStreamO(sp, mv$(input));
+        auto lex = TTStreamO(sp, ParseState(crate.m_edition), mv$(input));
         SET_MODULE(lex, mod);
         auto arm_stream = MacroPatternStream(rules.m_rules[i].m_pattern, &history);
 
@@ -1994,14 +2028,8 @@ Token MacroExpander::realGetToken()
                 DEBUG("Insert replacement #" << e << " = " << *frag);
                 if( frag->m_type == InterpolatedFragment::TT )
                 {
-                    if( can_steal )
-                    {
-                        m_ttstream.reset( new TTStreamO(this->outerSpan(), mv$(frag->as_tt()) ) );
-                    }
-                    else
-                    {
-                        m_ttstream.reset( new TTStreamO(this->outerSpan(), frag->as_tt().clone() ) );
-                    }
+                    auto res_tt = can_steal ? mv$(frag->as_tt()) : frag->as_tt().clone();
+                    m_ttstream.reset( new TTStreamO(this->outerSpan(), ParseState(m_invocation_edition), mv$(res_tt)) );
                     return m_ttstream->getToken();
                 }
                 else

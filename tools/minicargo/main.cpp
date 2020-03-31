@@ -16,6 +16,7 @@
 #include "build.h"
 #include <toml.h>   // TomlFile (workspace)
 #include <fstream>  // for workspace enumeration
+#include "cfg.hpp"
 
 struct ProgramOptions
 {
@@ -73,18 +74,7 @@ int main(int argc, const char* argv[])
 
         if( const char* e = getenv("MINICARGO_DEBUG") )
         {
-            while( *e )
-            {
-                const char* colon = ::std::strchr(e, ':');
-                size_t len = colon ? colon - e : ::std::strlen(e);
-
-                Debug_EnablePhase(::std::string(e, len).c_str());
-
-                if( colon )
-                    e = colon + 1;
-                else
-                    e = e + len;
-            }
+            Debug_ProcessEnable(e);
         }
     }
 
@@ -100,6 +90,8 @@ int main(int argc, const char* argv[])
         }
 
         auto bs_override_dir = opts.override_directory ? ::helpers::path(opts.override_directory) : ::helpers::path();
+
+        Cfg_SetTarget(opts.target);
 
         // 1. Load the Cargo.toml file from the passed directory
         Debug_SetPhase("Load Root");

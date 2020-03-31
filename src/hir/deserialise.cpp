@@ -581,6 +581,7 @@
                 }
             _(StaticString, m_in.read_string() )
             _(Const,  { box$(deserialise_path()) } )
+            _(Generic,  { m_in.read_istring(), static_cast<unsigned>(m_in.read_count()) })
             _(ItemAddr, box$(deserialise_path()) )
             #undef _
             default:
@@ -876,7 +877,7 @@
         TRACE_FUNCTION_FR("", rv);
         switch( auto tag = m_in.read_tag() )
         {
-        #define _(x, ...)    case ::HIR::TypeRef::Data::TAG_##x: DEBUG("- "#x); rv = ::HIR::TypeRef( ::HIR::TypeRef::Data::make_##x( __VA_ARGS__ ) ); break;
+        #define _(x, ...)    case ::HIR::TypeData::TAG_##x: DEBUG("- "#x); rv = ::HIR::TypeRef( ::HIR::TypeData::make_##x( __VA_ARGS__ ) ); break;
         _(Infer, {})
         _(Diverge, {})
         _(Primitive,
@@ -903,8 +904,7 @@
             })
         _(Array, {
             deserialise_ptr< ::HIR::TypeRef>(),
-            nullptr,
-            static_cast<size_t>(m_in.read_u64c() & SIZE_MAX)
+            m_in.read_u64c()
             })
         _(Slice, {
             deserialise_ptr< ::HIR::TypeRef>()

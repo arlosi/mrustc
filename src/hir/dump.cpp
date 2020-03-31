@@ -620,12 +620,28 @@ namespace {
                 m_os << (e ? "true" : "false");
                 ),
             (String,
-                // TODO: Escape
-                m_os << "\"" << e << "\"";
+                m_os << "\"" << FmtEscaped(e) << "\"";
                 ),
             (ByteString,
-                // TODO: Escape
-                m_os << "b\"" << e << "\"";
+                m_os << "b\"";
+                for(auto b : e)
+                {
+                    if( b == '\\' || b == '\"' )
+                    {
+                        m_os << "\\" << b;
+                    }
+                    else if( ' ' <= b && b <= 0x7F )
+                    {
+                        m_os << b;
+                    }
+                    else
+                    {
+                        char buf[3];
+                        sprintf(buf, "%02x", static_cast<uint8_t>(b));
+                        m_os << "\\x" << buf;
+                    }
+                }
+                m_os << "\"";
                 )
             )
         }
@@ -640,6 +656,10 @@ namespace {
         void visit(::HIR::ExprNode_Variable& node) override
         {
             m_os << node.m_name << "#" << node.m_slot;
+        }
+        void visit(::HIR::ExprNode_ConstParam& node) override
+        {
+            m_os << node.m_name << "#" << node.m_binding;
         }
         void visit(::HIR::ExprNode_StructLiteral& node) override
         {
@@ -730,5 +750,11 @@ void HIR_Dump(::std::ostream& sink, const ::HIR::Crate& crate)
     TreeVisitor tv { sink };
 
     tv.visit_crate( const_cast< ::HIR::Crate&>(crate) );
+}
+void HIR_DumpExpr(::std::ostream& sink, const ::HIR::ExprPtr& expr)
+{
+    TreeVisitor tv { sink };
+
+    const_cast<HIR::ExprPtr&>(expr)->visit(tv);
 }
 

@@ -64,6 +64,7 @@ struct MacroPatEnt
         PAT_ITEM,   // :item
         PAT_VIS,
         PAT_LIFETIME,
+        PAT_LITERAL,
     } type;
 
     MacroPatEnt():
@@ -85,8 +86,8 @@ struct MacroPatEnt
     {
     }
 
-    MacroPatEnt(Token sep, bool need_once, ::std::vector<MacroPatEnt> ents):
-        name( need_once ? "+" : "*" ),
+    MacroPatEnt(Token sep, const char* op, ::std::vector<MacroPatEnt> ents):
+        name( op ),
         tok( mv$(sep) ),
         subpats( move(ents) ),
         type(PAT_LOOP)
@@ -178,7 +179,7 @@ public:
     MacroRules(MacroRules&&) = default;
 };
 
-extern ::std::unique_ptr<TokenStream>   Macro_InvokeRules(const char *name, const MacroRules& rules, const Span& sp, TokenTree input, AST::Module& mod);
+extern ::std::unique_ptr<TokenStream>   Macro_InvokeRules(const char *name, const MacroRules& rules, const Span& sp, TokenTree input, const AST::Crate& crate, AST::Module& mod);
 extern MacroRulesPtr    Parse_MacroRules(TokenStream& lex);
 
 extern ::std::vector<MacroPatEnt> Parse_MacroRules_Pat(TokenStream& lex, enum eTokenType open, enum eTokenType close,  ::std::vector<RcString>& names);

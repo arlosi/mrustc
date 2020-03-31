@@ -611,10 +611,10 @@ struct ExprNode_Literal:
         ExprNode( mv$(sp) ),
         m_data( mv$(data) )
     {
-        TU_MATCH(Data, (m_data), (e),
+        TU_MATCHA( (m_data), (e),
         (Integer,
             if( e.m_type != ::HIR::CoreType::Str ) {
-                m_res_type = ::HIR::TypeRef::Data::make_Primitive(e.m_type);
+                m_res_type = ::HIR::TypeRef(e.m_type);
             }
             else {
                 m_res_type.m_data.as_Infer().ty_class = ::HIR::InferClass::Integer;
@@ -622,14 +622,14 @@ struct ExprNode_Literal:
             ),
         (Float,
             if( e.m_type != ::HIR::CoreType::Str ) {
-                m_res_type = ::HIR::TypeRef::Data::make_Primitive(e.m_type);
+                m_res_type = ::HIR::TypeRef(e.m_type);
             }
             else {
                 m_res_type.m_data.as_Infer().ty_class = ::HIR::InferClass::Float;
             }
             ),
         (Boolean,
-            m_res_type = ::HIR::TypeRef::Data::make_Primitive( ::HIR::CoreType::Bool );
+            m_res_type = ::HIR::TypeRef( ::HIR::CoreType::Bool );
             ),
         (String,
             // TODO: &'static
@@ -691,6 +691,20 @@ struct ExprNode_Variable:
         ExprNode(mv$(sp)),
         m_name( mv$(name) ),
         m_slot( slot )
+    {}
+
+    NODE_METHODS();
+};
+struct ExprNode_ConstParam:
+    public ExprNode
+{
+    RcString   m_name;
+    unsigned int    m_binding;
+
+    ExprNode_ConstParam(Span sp, RcString name, unsigned int binding):
+        ExprNode(mv$(sp)),
+        m_name( mv$(name) ),
+        m_binding( binding )
     {}
 
     NODE_METHODS();
@@ -860,6 +874,7 @@ public:
     NV(ExprNode_UnitVariant);
     NV(ExprNode_PathValue);
     NV(ExprNode_Variable);
+    NV(ExprNode_ConstParam);
 
     NV(ExprNode_StructLiteral);
     NV(ExprNode_UnionLiteral);
@@ -908,6 +923,7 @@ public:
     NV(ExprNode_UnitVariant);
     NV(ExprNode_PathValue);
     NV(ExprNode_Variable);
+    NV(ExprNode_ConstParam);
 
     NV(ExprNode_StructLiteral);
     NV(ExprNode_UnionLiteral);
@@ -928,3 +944,4 @@ public:
 
 }
 
+void HIR_DumpExpr(::std::ostream& sink, const ::HIR::ExprPtr& expr);

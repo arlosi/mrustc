@@ -8,14 +8,16 @@
 #include "tokenstream.hpp"
 #include <common.hpp>
 #include "parseerror.hpp"
+#include <ast/crate.hpp>    // Edition lookup
 
 const bool DEBUG_PRINT_TOKENS = false;
 //const bool DEBUG_PRINT_TOKENS = true;
 //#define DEBUG_PRINT_TOKENS  debug_enabled("Lexer Tokens")
 //#define FULL_TRACE
 
-TokenStream::TokenStream():
-    m_cache_valid(false)
+TokenStream::TokenStream(ParseState ps):
+    m_cache_valid(false),
+    m_parse_state(ps)
 {
 }
 TokenStream::~TokenStream()

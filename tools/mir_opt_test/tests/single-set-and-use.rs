@@ -52,8 +52,7 @@ fn nomut(a: i32) -> (i32,)
 	} RETURN;
 }
 
-/*	// TODO: This doesn't pass yet (can't move the assignment up it seems)
-// NOTE: Test based on sample from `<::"alloc"::rc::Rc<[u8],>>::allocate_for_ptr`
+// NOTE: Test based on a snippet from `<::"alloc"::rc::Rc<[u8],>>::allocate_for_ptr`
 // Reverse (upwards) movement
 #[test="borrowed_rev_exp"]
 fn borrowed_rev(a: &mut [u8], a2: &mut u8)
@@ -89,3 +88,32 @@ fn borrowed_rev_exp(a: &mut [u8], a2: &mut u8)
 	} DIVERGE;
 }
 //*/
+
+
+//fn <&usize as ::"core"::ops::bit::Shl<&i8,>>::shl(arg0: &usize, arg1: &i8) -> usize
+//#[test="borrow_usize_shl_borrow_i8_exp"]
+fn borrow_usize_shl_borrow_i8(arg0: &usize, arg1: &i8) -> usize {
+	let var0: usize;
+	let var1: i8;
+	bb0: {
+		ASSIGN var1 = arg1*;
+		ASSIGN var0 = arg0*;
+		ASSIGN retval = BIT_SHL(var0, var1);
+	} RETURN;
+}
+fn borrow_usize_shl_borrow_i8_exp(arg0: &usize, arg1: &i8) -> usize {
+	bb0: {
+		ASSIGN retval = BIT_SHL(arg0*, arg1*);
+	} RETURN;
+}
+
+
+#[test="neg_srcused"]
+fn neg_srcused(v: (u32, &mut u32,)) -> ((u32, &mut u32,), u32,)
+{
+    let v1: u32;
+    bb0: {
+        ASSIGN v1 = v.0;
+        ASSIGN retval = (v, v1);
+    } RETURN;
+}

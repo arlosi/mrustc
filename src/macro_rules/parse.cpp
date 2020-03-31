@@ -10,6 +10,7 @@
 #include "../parse/parseerror.hpp"
 #include "macro_rules.hpp"
 #include "pattern_checks.hpp"
+#include <ast/crate.hpp>    // for editions
 
 MacroRulesPtr Parse_MacroRules(TokenStream& lex);
 namespace {
@@ -62,7 +63,7 @@ public:
                 if( !(TOK_RWORD_PUB <= tok.type() && tok.type() <= TOK_RWORD_UNSIZED) )
                     throw ParseError::Unexpected(lex, tok);
             case TOK_IDENT: {
-                auto name = tok.type() == TOK_IDENT ? tok.istr() : RcString::new_interned(FMT(tok));
+                auto name = tok.type() == TOK_IDENT ? tok.istr() : RcString::new_interned(tok.to_str());
                 GET_CHECK_TOK(tok, lex, TOK_COLON);
                 GET_CHECK_TOK(tok, lex, TOK_IDENT);
                 RcString type = tok.istr();
@@ -97,6 +98,8 @@ public:
                     ret.push_back( MacroPatEnt(name, idx, MacroPatEnt::PAT_VIS) );
                 else if( /*TARGETVER_1_29 && */ type == "lifetime" ) // TODO: Should this be selective?
                     ret.push_back( MacroPatEnt(name, idx, MacroPatEnt::PAT_LIFETIME) );
+                else if( /*TARGETVER_1_39 && */ type == "literal" ) // TODO: Should this be selective?
+                    ret.push_back( MacroPatEnt(name, idx, MacroPatEnt::PAT_LITERAL) );
                 else
                     ERROR(lex.point_span(), E0000, "Unknown fragment type '" << type << "'");
                 break; }
@@ -104,7 +107,15 @@ public:
                 auto subpat = Parse_MacroRules_Pat(lex, TOK_PAREN_OPEN, TOK_PAREN_CLOSE, names);
                 enum eTokenType joiner = TOK_NULL;
                 GET_TOK(tok, lex);
-                if( tok.type() != TOK_PLUS && tok.type() != TOK_STAR )
+                if( lex.parse_state().edition_after(AST::Edition::Rust2018) && tok.type() == TOK_QMARK )
+                {
+                    // 2018 added `?` repetition operator
+                }
+                else if( tok.type() == TOK_PLUS || tok.type() == TOK_STAR )
+                {
+                    // `+` and `*` were present at 1.0 (2015)
+                }
+                else
                 {
                     DEBUG("joiner = " << tok);
                     joiner = tok.type();
@@ -115,14 +126,18 @@ public:
                 {
                 case TOK_PLUS:
                     DEBUG("$()+ " << subpat);
-                    ret.push_back( MacroPatEnt(Token(joiner), true, ::std::move(subpat)) );
+                    ret.push_back( MacroPatEnt(Token(joiner), "+", ::std::move(subpat)) );
                     break;
                 case TOK_STAR:
                     DEBUG("$()* " << subpat);
-                    ret.push_back( MacroPatEnt(Token(joiner), false, ::std::move(subpat)) );
+                    ret.push_back( MacroPatEnt(Token(joiner), "*", ::std::move(subpat)) );
+                    break;
+                case TOK_QMARK:
+                    DEBUG("$()? " << subpat);
+                    ret.push_back( MacroPatEnt(Token(joiner), "?", ::std::move(subpat)) );
                     break;
                 default:
-                    throw ParseError::Unexpected(lex, tok);
+                    throw ParseError::Unexpected(lex, tok, { TOK_PLUS, TOK_STAR });
                 }
                 break; }
             }
@@ -187,12 +202,34 @@ public:
 
                 GET_TOK(tok, lex);
                 enum eTokenType joiner = TOK_NULL;
-                if( tok.type() != TOK_PLUS && tok.type() != TOK_STAR )
+                bool is_optional;
+                if( lex.parse_state().edition_after(AST::Edition::Rust2018) && tok.type() == TOK_QMARK )
+                {
+                    // 2018 added `?` repetition operator
+                }
+                else if( tok.type() == TOK_PLUS || tok.type() == TOK_STAR )
+                {
+                    // `+` and `*` were present at 1.0 (2015)
+                }
+                else
                 {
                     joiner = tok.type();
+                    is_optional = false;
                     GET_TOK(tok, lex);
                 }
-                bool is_optional = (tok.type() == TOK_STAR);
+                switch(tok.type())
+                {
+                case TOK_PLUS:
+                    is_optional = false; if(0)
+                case TOK_STAR:
+                    is_optional = true; if(0)
+                case TOK_QMARK:
+                    is_optional = true;
+                    // TODO: Ensure that +/* match up?
+                    break;
+                default:
+                    throw ParseError::Unexpected(lex, tok);
+                }
                 if( var_set_ptr ) {
                     for(const auto& v : var_set) {
                         // If `is_optional`: Loop may not be expanded, so var_not_opt=false
@@ -201,17 +238,8 @@ public:
                         var_set_ptr->insert( ::std::make_pair(v.first, var_not_opt) ).first->second |= var_not_opt;
                     }
                 }
-                DEBUG("joiner = " << Token(joiner) << ", content = " << content);
-                switch(tok.type())
-                {
-                case TOK_PLUS:
-                case TOK_STAR:
-                    // TODO: Ensure that +/* match up?
-                    ret.push_back( MacroExpansionEnt({mv$(content), joiner, mv$(var_set)}) );
-                    break;
-                default:
-                    throw ParseError::Unexpected(lex, tok);
-                }
+                DEBUG("joiner = " << Token(joiner) << ", var_set = " << var_set << ", content = " << content);
+                ret.push_back( MacroExpansionEnt::make_Loop({mv$(content), joiner, mv$(var_set)}) );
             }
             else if( tok.type() == TOK_RWORD_CRATE )
             {
@@ -221,12 +249,14 @@ public:
             else if( tok.type() == TOK_IDENT || tok.type() >= TOK_RWORD_PUB )
             {
                 // Look up the named parameter in the list of param names for this arm
-                auto name = tok.type() == TOK_IDENT ? tok.istr() : RcString::new_interned(FMT(tok));
+                auto name = tok.type() == TOK_IDENT ? tok.istr() : RcString::new_interned(tok.to_str());
                 unsigned int idx = ::std::find(var_names.begin(), var_names.end(), name) - var_names.begin();
                 if( idx == var_names.size() ) {
                     // TODO: `error-chain`'s quick_error macro has an arm which refers to an undefined metavar.
                     // - Maybe emit a warning and use a marker index.
-                    WARNING(lex.point_span(), W0000, "Macro variable $" << name << " not found");
+                    // NOTE: No warning emitted, it's just noise...
+                    //WARNING(lex.point_span(), W0000, "Macro variable $" << name << " not found");
+
                     // Emit the literal $ <name>
                     ret.push_back( MacroExpansionEnt(Token(TOK_DOLLAR)) );
                     ret.push_back( MacroExpansionEnt(mv$(tok)) );
@@ -342,19 +372,17 @@ MacroRulesPtr Parse_MacroRules(TokenStream& lex)
     }
     DEBUG("- " << rules.size() << " rules");
 
-    ::std::vector<MacroRulesArm>    rule_arms;
+    auto rv = MacroRulesPtr(new MacroRules( ));
+    rv->m_hygiene = lex.getHygiene();
+    //rv->m_rules = mv$(rule_arms);
 
     // Re-parse the patterns into a unified form
     for(auto& rule : rules)
     {
-        rule_arms.push_back( Parse_MacroRules_MakeArm(rule.m_pat_span, mv$(rule.m_pattern), mv$(rule.m_contents)) );
+        rv->m_rules.push_back( Parse_MacroRules_MakeArm(rule.m_pat_span, mv$(rule.m_pattern), mv$(rule.m_contents)) );
     }
 
-    auto rv = new MacroRules( );
-    rv->m_hygiene = lex.getHygiene();
-    rv->m_rules = mv$(rule_arms);
-
-    return MacroRulesPtr(rv);
+    return rv;
 }
 
 namespace {
@@ -387,8 +415,15 @@ namespace {
                     {
                         return true;
                     }
-                    // for * and ? loops, they can be skipped entirely.
-                    // - No separator, this is for the skip case
+                    else if( ent.name == "*" || ent.name == "?" )
+                    {
+                        // for * and ? loops, they can be skipped entirely.
+                        // - No separator, this is for the skip case
+                    }
+                    else
+                    {
+                        BUG(Span(), "Unknown loop type " << ent.name);
+                    }
                 }
                 else
                 {
@@ -526,7 +561,7 @@ namespace {
                     }
                     push( SimplePatEnt::make_LoopEnd({}) );
                 }
-                else
+                else if( ent.name == "*" || ent.name == "?" )
                 {
                     push( SimplePatEnt::make_LoopStart({}) );
 
@@ -534,36 +569,33 @@ namespace {
                     // - Enter the loop (if the next token is one of the head set of the loop)
                     // - Skip the loop (the next token is the head set of the subsequent entries)
                     size_t rewrite_start = rv.size();
-                    if( ent.name != "+" )
+                    if( entry_pats.size() == 1 )
                     {
-                        if( entry_pats.size() == 1 )
+                        // If not the entry pattern, skip.
+                        push_if(false, entry_pats.front().ty, *entry_pats.front().tok, ~0u);
+                    }
+                    else if( skip_pats.empty() )
+                    {
+                        // No skip patterns, try all entry patterns
+                        size_t start = rv.size() + entry_pats.size() + 1;
+                        for(const auto& p : entry_pats)
                         {
-                            // If not the entry pattern, skip.
-                            push_if(false, entry_pats.front().ty, *entry_pats.front().tok, ~0u);
+                            push_if(true, p.ty, *p.tok, start);
                         }
-                        else if( skip_pats.empty() )
+                        push(SimplePatEnt::make_Jump({ ~0u }));
+                    }
+                    else
+                    {
+                        for(const auto& p : skip_pats)
                         {
-                            // No skip patterns, try all entry patterns
-                            size_t start = rv.size() + entry_pats.size() + 1;
-                            for(const auto& p : entry_pats)
-                            {
-                                push_if(true, p.ty, *p.tok, start);
-                            }
-                            push(SimplePatEnt::make_Jump({ ~0u }));
-                        }
-                        else
-                        {
-                            for(const auto& p : skip_pats)
-                            {
-                                push_if(true, p.ty, *p.tok, ~0u);
-                            }
+                            push_if(true, p.ty, *p.tok, ~0u);
                         }
                     }
 
                     macro_pattern_to_simple_inner(sp, rv, ent.subpats);
                     push( SimplePatEnt::make_LoopNext({}) );
 
-                    if( ent.name != "?" )
+                    if( ent.name == "*" )
                     {
                         if( ent.tok != TOK_NULL )
                         {
@@ -587,9 +619,13 @@ namespace {
                         // Jump back to the entry check.
                         push(SimplePatEnt::make_Jump({ rewrite_start }));
                     }
-                    else
+                    else if( ent.name == "?" )
                     {
                         ASSERT_BUG(sp, ent.tok == TOK_NULL, "$()? with a separator isn't valid");
+                    }
+                    else
+                    {
+                        BUG(sp, "");
                     }
                     size_t post_loop = rv.size();
                     for(size_t i = rewrite_start; i < post_loop; i++)
@@ -606,6 +642,10 @@ namespace {
                         }
                     }
                     push( SimplePatEnt::make_LoopEnd({}) );
+                }
+                else
+                {
+                    TODO(sp, "Handle loop type '" << ent.name << "'");
                 }
                 } break;
             case MacroPatEnt::PAT_TOKEN:

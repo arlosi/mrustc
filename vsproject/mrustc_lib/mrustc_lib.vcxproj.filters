@@ -240,9 +240,6 @@
     <ClCompile Include="..\..\src\parse\pattern.cpp">
       <Filter>Source Files\parse</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\src\macro_rules\parse.cpp">
-      <Filter>Source Files\parse</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\src\parse\root.cpp">
       <Filter>Source Files\parse</Filter>
     </ClCompile>
@@ -296,9 +293,6 @@
     </ClCompile>
     <ClCompile Include="..\..\src\hir\path.cpp">
       <Filter>Source Files\hir</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\src\hir\generic_params.cpp">
-      <Filter>Source Files\ast</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\resolve\index.cpp">
       <Filter>Source Files\resolve</Filter>
@@ -404,6 +398,18 @@
     </ClCompile>
     <ClCompile Include="..\..\src\hir_typeck\expr_visit.cpp">
       <Filter>Source Files\hir_typeck</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\hir_expand\static_borrow_constants.cpp">
+      <Filter>Source Files\hir_expand</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\mir\borrow_check.cpp">
+      <Filter>Source Files\mir</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\hir\generic_params.cpp">
+      <Filter>Source Files\hir</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\macro_rules\parse.cpp">
+      <Filter>Source Files\macro_rules</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -611,8 +617,15 @@
     <ClInclude Include="..\..\src\macro_rules\pattern_checks.hpp">
       <Filter>Header Files\macro_rules</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\src\ast\edition.hpp">
+      <Filter>Header Files\ast</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="../packages.config" />
+    <None Include="cpp.hint" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="NatvisFile.natvis" />
   </ItemGroup>
 </Project>

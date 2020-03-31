@@ -46,6 +46,8 @@ class Static;
 class Function;
 class ExternCrate;
 
+class Path;
+
 TAGGED_UNION_EX(PathBinding_Value, (), Unbound, (
     (Unbound, struct {
         }),
@@ -64,6 +66,9 @@ TAGGED_UNION_EX(PathBinding_Value, (), Unbound, (
         const Enum* enum_;
         unsigned int idx;
         const ::HIR::Enum*  hir;
+        }),
+    (Generic, struct {
+        unsigned int index;
         }),
     (Variable, struct {
         unsigned int slot;
@@ -157,22 +162,18 @@ struct PathParams
 {
     ::std::vector< LifetimeRef >  m_lifetimes;
     ::std::vector< TypeRef >    m_types;
-    ::std::vector< ::std::pair< RcString, TypeRef> >   m_assoc;
+    ::std::vector< ::std::pair< RcString, TypeRef> >   m_assoc_equal;
+    ::std::vector< ::std::pair< RcString, Path> >   m_assoc_bound;
 
     PathParams(PathParams&& x) = default;
     PathParams(const PathParams& x);
     PathParams() {}
-    PathParams(::std::vector<LifetimeRef> lfts, ::std::vector<TypeRef> tys, ::std::vector<::std::pair<RcString,TypeRef>> a):
-        m_lifetimes(mv$(lfts)),
-        m_types(mv$(tys)),
-        m_assoc(mv$(a))
-    {}
 
     PathParams& operator=(PathParams&& x) = default;
     PathParams& operator=(const PathParams& x) = delete;
 
     bool is_empty() const {
-        return m_lifetimes.empty() && m_types.empty() && m_assoc.empty();
+        return m_lifetimes.empty() && m_types.empty() && m_assoc_equal.empty() && m_assoc_bound.empty();
     }
 
     Ordering ord(const PathParams& x) const;
@@ -344,6 +345,19 @@ public:
             return e.nodes.size() == 1 && e.nodes[0].args().is_empty();
             )
         )
+    }
+    const RcString& as_trivial() const {
+        TU_MATCH_HDRA( (m_class), {)
+        default:
+            break;
+        TU_ARMA(Local, e) {
+            return e.name;
+            }
+        TU_ARMA(Relative, e) {
+            return e.nodes[0].name();
+            }
+        }
+        throw std::runtime_error("as_trivial on non-trivial path");
     }
 
     bool is_valid() const { return !m_class.is_Invalid(); }

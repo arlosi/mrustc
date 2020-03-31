@@ -53,21 +53,42 @@ const Attribute* AttributeList::get(const char *name) const
     }
     return os;
 }
+::std::ostream& operator<<(::std::ostream& os, const AttributeName& x) {
+    if(x.elems.empty())
+    {
+        os << "''";
+    }
+    else
+    {
+        for(const auto& i : x.elems)
+        {
+            if(&i != &x.elems.front())
+                os << "::";
+            os << i;
+        }
+    }
+    return os;
+}
 
 Attribute Attribute::clone() const
 {
-    TU_MATCHA( (m_data), (e),
-    (None,
-        return Attribute(m_span, m_name);
-        ),
-    (String,
-        return Attribute(m_span, m_name, e.val);
-        ),
-    (List,
-        return Attribute(m_span, m_name, clone_mivec(e.sub_items));
-        )
-    )
-    throw ::std::runtime_error("Attribute::clone - Fell off end");
+    struct H {
+        static AttributeData clone_ad(const AttributeData& ad) {
+            TU_MATCHA( (ad), (e),
+            (None,
+                return AttributeData::make_None({});
+                ),
+            (String,
+                return AttributeData::make_String({ e.val });
+                ),
+            (List,
+                return AttributeData::make_List({ clone_mivec(e.sub_items) });
+                )
+            )
+            throw ::std::runtime_error("Attribute::clone - Fell off end");
+        }
+    };
+    return Attribute(m_span, m_name, H::clone_ad(m_data));
 }
 
 StructItem StructItem::clone() const
@@ -248,7 +269,7 @@ bool Impl::has_named_item(const RcString& name) const
 
 MacroInvocation MacroInvocation::clone() const
 {
-    return MacroInvocation(m_span, m_macro_name, m_ident, m_input.clone());
+    return MacroInvocation(m_span, AST::Path(m_macro_path), m_ident, m_input.clone());
 }
 
 UseItem UseItem::clone() const
@@ -381,19 +402,54 @@ Item Item::clone() const
     os << "'" << p.m_name;
     return os;
 }
-
-::std::ostream& operator<<(::std::ostream& os, const HigherRankedBounds& x)
+::std::ostream& operator<<(::std::ostream& os, const ValueParam& p)
 {
-    if( x.m_lifetimes.empty() ) {
-        return os;
-    }
-    os << "for<";
-    for(const auto& l : x.m_lifetimes)
-        os << "'" << l << ",";
-    os << "> ";
+    os << "const " << p.m_name << ": " << p.m_type;
     return os;
 }
 
+::std::ostream& operator<<(::std::ostream& os, const HigherRankedBounds& x)
+{
+    if( !x.empty() )
+    {
+        os << "for<";
+        for(const auto& l : x.m_lifetimes)
+            os << "'" << l << ",";
+        os << "> ";
+    }
+    return os;
+}
+
+
+GenericParam GenericParam::clone() const
+{
+    TU_MATCH_HDRA( (*this), {)
+    TU_ARMA(None, e)
+        return e;
+    TU_ARMA(Lifetime, e)
+        return LifetimeParam(e);
+    TU_ARMA(Type, e)
+        return TypeParam(e);
+    TU_ARMA(Value, e)
+        return ValueParam(e);
+    }
+    throw "";
+}
+
+std::ostream& operator<<(std::ostream& os, const GenericParam& x)
+{
+    TU_MATCH_HDRA( (x), {)
+    TU_ARMA(None, e)
+        os << "/*-*/";
+    TU_ARMA(Lifetime, e)
+        os << e;
+    TU_ARMA(Type, e)
+        os << e;
+    TU_ARMA(Value, e)
+        os << e;
+    }
+    return os;
+}
 
 ::std::ostream& operator<<(::std::ostream& os, const GenericBound& x)
 {
@@ -424,20 +480,20 @@ Item Item::clone() const
 }
 
 
-int GenericParams::find_name(const char* name) const
-{
-    for( unsigned int i = 0; i < m_type_params.size(); i ++ )
-    {
-        if( m_type_params[i].name() == name )
-            return i;
-    }
-    DEBUG("Type param '" << name << "' not in list");
-    return -1;
-}
+//int GenericParams::find_name(const char* name) const
+//{
+//    for( unsigned int i = 0; i < m_type_params.size(); i ++ )
+//    {
+//        if( m_type_params[i].name() == name )
+//            return i;
+//    }
+//    DEBUG("Type param '" << name << "' not in list");
+//    return -1;
+//}
 
 ::std::ostream& operator<<(::std::ostream& os, const GenericParams& tps)
 {
-    return os << "<" << tps.m_lifetime_params << "," << tps.m_type_params << "> where {" << tps.m_bounds << "}";
+    return os << "<" << tps.m_params << "> where {" << tps.m_bounds << "}";
 }
 
 }    // namespace AST
