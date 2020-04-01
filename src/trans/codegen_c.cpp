@@ -2026,6 +2026,7 @@ namespace {
             TRACE_FUNCTION_F(p);
 
             auto type = params.monomorph(m_resolve, item.m_type);
+            // statics that are zero do not require initializers, since they will be initialized to zero on program startup.
             if (!is_zero_literal(type, item.m_value_res, params)) {
                 emit_ctype(type, FMT_CB(ss, ss << Trans_Mangle(p);));
                 m_of << " = ";
@@ -2036,100 +2037,6 @@ namespace {
             }
 
             m_mir_res = nullptr;
-        }
-        bool is_zero_literal(const ::HIR::TypeRef& ty, const ::HIR::Literal& lit, const Trans_Params& params) {
-            ::HIR::TypeRef  tmp;
-            auto monomorph_with = [&](const ::HIR::PathParams& pp, const ::HIR::TypeRef& ty)->const ::HIR::TypeRef& {
-                if (monomorphise_type_needed(ty)) {
-                    tmp = monomorphise_type_with(sp, ty, monomorphise_type_get_cb(sp, nullptr, &pp, nullptr), false);
-                    m_resolve.expand_associated_types(sp, tmp);
-                    return tmp;
-                }
-                else {
-                    return ty;
-                }
-            };
-            auto get_inner_type = [&](unsigned int var, unsigned int idx)->const ::HIR::TypeRef& {
-                TU_MATCH_HDRA((ty.m_data), { )
-                default:
-                    MIR_TODO(*m_mir_res, "Unknown type in list literal - " << ty);
-                TU_ARMA(Array, te) {
-                    return *te.inner;
-                    }
-                TU_ARMA(Path, te) {
-                    const auto& pp = te.path.m_data.as_Generic().m_params;
-                    TU_MATCH_HDRA((te.binding), {)
-                    TU_ARMA(Unbound, pbe)   MIR_BUG(*m_mir_res, "Unbound type path " << ty);
-                    TU_ARMA(Opaque, pbe)    MIR_BUG(*m_mir_res, "Opaque type path " << ty);
-                    TU_ARMA(ExternType, pbe) {
-                        MIR_BUG(*m_mir_res, "Extern type literal");
-                        }
-                    TU_ARMA(Struct, pbe) {
-                        TU_MATCH_HDRA((pbe->m_data), {)
-                        TU_ARMA(Unit, se) {
-                            MIR_BUG(*m_mir_res, "Unit struct " << ty);
-                            }
-                        TU_ARMA(Tuple, se) {
-                            return monomorph_with(pp, se.at(idx).ent);
-                            }
-                        TU_ARMA(Named, se) {
-                            return monomorph_with(pp, se.at(idx).second.ent);
-                            }
-                        }
-                        }
-                    TU_ARMA(Union, pbe) {
-                        MIR_TODO(*m_mir_res, "Union literals");
-                        }
-                    TU_ARMA(Enum, pbe) {
-                        MIR_ASSERT(*m_mir_res, pbe->m_data.is_Data(), "");
-                        const auto& evar = pbe->m_data.as_Data().at(var);
-                        return monomorph_with(pp, evar.type);
-                        }
-                    }
-                    throw "";
-                    }
-                TU_ARMA(Tuple, te) {
-                    return te.at(idx);
-                    }
-                }
-            };
-
-            TU_MATCHA( (lit), (e),
-            (List,
-                bool all_zero = true;
-                for(unsigned int i = 0; i < e.size(); i ++) {
-                    const auto& ity = get_inner_type(0, i);
-                    all_zero &= is_zero_literal(ity, e[i], params);
-                }
-                return all_zero;
-                ),
-            (Variant,
-                MIR_ASSERT(*m_mir_res, ty.m_data.is_Path(), "");
-                MIR_ASSERT(*m_mir_res, ty.m_data.as_Path().binding.is_Enum(), "");
-                const auto* repr = Target_GetTypeRepr(sp, m_resolve, ty);
-                const auto& enm = *ty.m_data.as_Path().binding.as_Enum();
-                if( repr->variants.is_None() ) {
-                    return true;
-                } else if( const auto* ve = repr->variants.opt_NonZero() ) {
-                    if( e.idx == ve->zero_variant ) {
-                        return true;
-                    } else {
-                        return is_zero_literal(get_inner_type(e.idx, 0), *e.val, params);
-                    }
-                } else if( enm.is_value() ) {
-                    return false;
-                } else {
-                    return repr->variants.as_Values().values[e.idx] == 0 && is_zero_literal(get_inner_type(e.idx, 0), *e.val, params);
-                }),
-            (Integer, return e == 0; ),
-            (Float, return e == 0; ),
-            (String, return false; ),
-            (Invalid, return false; ),
-            (Defer, return false; ),
-            (BorrowPath, return false; ),
-            (BorrowData, return false; )
-            )
-            return false;
         }
         void emit_float(double v) {
             if( ::std::isnan(v) ) {
@@ -5703,6 +5610,102 @@ namespace {
             }
         }
 
+        // returns whether a literal can be represented as zeroed memory.
+        bool is_zero_literal(const ::HIR::TypeRef& ty, const ::HIR::Literal& lit, const Trans_Params& params) {
+            ::HIR::TypeRef  tmp;
+            auto monomorph_with = [&](const ::HIR::PathParams& pp, const ::HIR::TypeRef& ty)->const ::HIR::TypeRef& {
+                if (monomorphise_type_needed(ty)) {
+                    tmp = monomorphise_type_with(sp, ty, monomorphise_type_get_cb(sp, nullptr, &pp, nullptr), false);
+                    m_resolve.expand_associated_types(sp, tmp);
+                    return tmp;
+                }
+                else {
+                    return ty;
+                }
+            };
+            auto get_inner_type = [&](unsigned int var, unsigned int idx)->const ::HIR::TypeRef& {
+                TU_MATCH_HDRA((ty.m_data), { )
+                default:
+                    MIR_TODO(*m_mir_res, "Unknown type in list literal - " << ty);
+                TU_ARMA(Array, te) {
+                    return *te.inner;
+                    }
+                TU_ARMA(Path, te) {
+                    const auto& pp = te.path.m_data.as_Generic().m_params;
+                    TU_MATCH_HDRA((te.binding), {)
+                    TU_ARMA(Unbound, pbe)   MIR_BUG(*m_mir_res, "Unbound type path " << ty);
+                    TU_ARMA(Opaque, pbe)    MIR_BUG(*m_mir_res, "Opaque type path " << ty);
+                    TU_ARMA(ExternType, pbe) {
+                        MIR_BUG(*m_mir_res, "Extern type literal");
+                        }
+                    TU_ARMA(Struct, pbe) {
+                        TU_MATCH_HDRA((pbe->m_data), {)
+                        TU_ARMA(Unit, se) {
+                            MIR_BUG(*m_mir_res, "Unit struct " << ty);
+                            }
+                        TU_ARMA(Tuple, se) {
+                            return monomorph_with(pp, se.at(idx).ent);
+                            }
+                        TU_ARMA(Named, se) {
+                            return monomorph_with(pp, se.at(idx).second.ent);
+                            }
+                        }
+                        }
+                    TU_ARMA(Union, pbe) {
+                        MIR_TODO(*m_mir_res, "Union literals");
+                        }
+                    TU_ARMA(Enum, pbe) {
+                        MIR_ASSERT(*m_mir_res, pbe->m_data.is_Data(), "");
+                        const auto& evar = pbe->m_data.as_Data().at(var);
+                        return monomorph_with(pp, evar.type);
+                        }
+                    }
+                    throw "";
+                    }
+                TU_ARMA(Tuple, te) {
+                    return te.at(idx);
+                    }
+                }
+            };
+
+            TU_MATCH_HDRA( (lit), {)
+            TU_ARMA(List, e) {
+                bool all_zero = true;
+                for(unsigned int i = 0; i < e.size(); i ++) {
+                    const auto& ity = get_inner_type(0, i);
+                    all_zero &= is_zero_literal(ity, e[i], params);
+                }
+                return all_zero;
+                }
+            TU_ARMA(Variant, e) {
+                MIR_ASSERT(*m_mir_res, ty.m_data.is_Path(), "");
+                MIR_ASSERT(*m_mir_res, ty.m_data.as_Path().binding.is_Enum(), "");
+                const auto* repr = Target_GetTypeRepr(sp, m_resolve, ty);
+                const auto& enm = *ty.m_data.as_Path().binding.as_Enum();
+                if( repr->variants.is_None() ) {
+                    return true;
+                } else if( const auto* ve = repr->variants.opt_NonZero() ) {
+                    if( e.idx == ve->zero_variant ) {
+                        return true;
+                    } else {
+                        return is_zero_literal(get_inner_type(e.idx, 0), *e.val, params);
+                    }
+                } else if( enm.is_value() ) {
+                    return false;
+                } else {
+                    return repr->variants.as_Values().values[e.idx] == 0 && is_zero_literal(get_inner_type(e.idx, 0), *e.val, params);
+                }
+            }
+            TU_ARMA(Integer, e) { return e == 0; }
+            TU_ARMA(Float, e) { return e == 0; }
+            TU_ARMA(String, e) { return false; }
+            TU_ARMA(Invalid, e) { return false; }
+            TU_ARMA(Defer, e) { return false; }
+            TU_ARMA(BorrowPath, e) { return false; }
+            TU_ARMA(BorrowData, e) { return false; }
+            }
+            return false;
+        }
         void emit_lvalue(const ::MIR::LValue::CRef& val)
         {
             TU_MATCH_HDRA( (val), {)
