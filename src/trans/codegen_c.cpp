@@ -2040,7 +2040,7 @@ namespace {
         bool is_zero_literal(const ::HIR::TypeRef& ty, const ::HIR::Literal& lit, const Trans_Params& params) {
             ::HIR::TypeRef  tmp;
             auto monomorph_with = [&](const ::HIR::PathParams& pp, const ::HIR::TypeRef& ty)->const ::HIR::TypeRef& {
-                if( monomorphise_type_needed(ty) ) {
+                if (monomorphise_type_needed(ty)) {
                     tmp = monomorphise_type_with(sp, ty, monomorphise_type_get_cb(sp, nullptr, &pp, nullptr), false);
                     m_resolve.expand_associated_types(sp, tmp);
                     return tmp;
@@ -2048,48 +2048,52 @@ namespace {
                 else {
                     return ty;
                 }
-                };
+            };
             auto get_inner_type = [&](unsigned int var, unsigned int idx)->const ::HIR::TypeRef& {
-                TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Array, te,
+                TU_MATCH_HDRA((ty.m_data), { )
+                default:
+                    MIR_TODO(*m_mir_res, "Unknown type in list literal - " << ty);
+                TU_ARMA(Array, te) {
                     return *te.inner;
-                )
-                else TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Path, te,
+                    }
+                TU_ARMA(Path, te) {
                     const auto& pp = te.path.m_data.as_Generic().m_params;
-                    TU_MATCHA((te.binding), (pbe),
-                    (Unbound, MIR_BUG(*m_mir_res, "Unbound type path " << ty); ),
-                    (Opaque, MIR_BUG(*m_mir_res, "Opaque type path " << ty); ),
-                    (ExternType, MIR_BUG(*m_mir_res, "Extern type literal " << ty); ),
-                    (Struct,
-                        TU_MATCHA( (pbe->m_data), (se),
-                        (Unit,
+                    TU_MATCH_HDRA((te.binding), {)
+                    TU_ARMA(Unbound, pbe)   MIR_BUG(*m_mir_res, "Unbound type path " << ty);
+                    TU_ARMA(Opaque, pbe)    MIR_BUG(*m_mir_res, "Opaque type path " << ty);
+                    TU_ARMA(ExternType, pbe) {
+                        MIR_BUG(*m_mir_res, "Extern type literal");
+                        }
+                    TU_ARMA(Struct, pbe) {
+                        TU_MATCH_HDRA((pbe->m_data), {)
+                        TU_ARMA(Unit, se) {
                             MIR_BUG(*m_mir_res, "Unit struct " << ty);
-                            ),
-                        (Tuple,
+                            }
+                        TU_ARMA(Tuple, se) {
                             return monomorph_with(pp, se.at(idx).ent);
-                            ),
-                        (Named,
+                            }
+                        TU_ARMA(Named, se) {
                             return monomorph_with(pp, se.at(idx).second.ent);
-                            )
-                        )
-                        ),
-                    (Union,
+                            }
+                        }
+                        }
+                    TU_ARMA(Union, pbe) {
                         MIR_TODO(*m_mir_res, "Union literals");
-                        ),
-                    (Enum,
-                        MIR_ASSERT(*m_mir_res, pbe->m_data.is_Data(), "Getting inner type of a non-Data enum");
+                        }
+                    TU_ARMA(Enum, pbe) {
+                        MIR_ASSERT(*m_mir_res, pbe->m_data.is_Data(), "");
                         const auto& evar = pbe->m_data.as_Data().at(var);
                         return monomorph_with(pp, evar.type);
-                        )
-                    )
+                        }
+                    }
                     throw "";
-                )
-                else TU_IFLET(::HIR::TypeRef::Data, ty.m_data, Tuple, te,
+                    }
+                TU_ARMA(Tuple, te) {
                     return te.at(idx);
-                )
-                else {
-                    MIR_TODO(*m_mir_res, "Unknown type in list literal - " << ty);
+                    }
                 }
-                };
+            };
+
             TU_MATCHA( (lit), (e),
             (List,
                 bool all_zero = true;
@@ -2104,31 +2108,19 @@ namespace {
                 MIR_ASSERT(*m_mir_res, ty.m_data.as_Path().binding.is_Enum(), "");
                 const auto* repr = Target_GetTypeRepr(sp, m_resolve, ty);
                 const auto& enm = *ty.m_data.as_Path().binding.as_Enum();
-                if( repr->variants.is_None() )
-                {
+                if( repr->variants.is_None() ) {
                     return true;
-                }
-                else if( const auto* ve = repr->variants.opt_NonZero() )
-                {
-                    if( e.idx == ve->zero_variant )
-                    {
+                } else if( const auto* ve = repr->variants.opt_NonZero() ) {
+                    if( e.idx == ve->zero_variant ) {
                         return true;
-                    }
-                    else
-                    {
+                    } else {
                         return is_zero_literal(get_inner_type(e.idx, 0), *e.val, params);
                     }
-                }
-                else if( enm.is_value() )
-                {
+                } else if( enm.is_value() ) {
                     return false;
-                }
-                else
-                {
-                    const auto& ity = get_inner_type(e.idx, 0);
-                    return repr->variants.as_Values().values[e.idx] == 0 && is_zero_literal(ity, *e.val, params);
-                }
-                ),
+                } else {
+                    return repr->variants.as_Values().values[e.idx] == 0 && is_zero_literal(get_inner_type(e.idx, 0), *e.val, params);
+                }),
             (Integer, return e == 0; ),
             (Float, return e == 0; ),
             (String, return false; ),
